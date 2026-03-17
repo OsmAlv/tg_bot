@@ -337,5 +337,9 @@ async def parse_with_fallback(url: str) -> CarInfo:
     try:
         return parse_car_from_html(html, url)
     except ValueError:
-        rendered_html = await fetch_page_html(url, use_playwright=True)
-        return parse_car_from_html(rendered_html, url, strict=False)
+        try:
+            rendered_html = await fetch_page_html(url, use_playwright=True)
+            return parse_car_from_html(rendered_html, url, strict=False)
+        except Exception:
+            # Graceful fallback when dynamic rendering is unavailable in runtime
+            return parse_car_from_html(html, url, strict=False)

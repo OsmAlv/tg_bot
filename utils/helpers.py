@@ -113,17 +113,20 @@ async def _fetch_with_playwright(url: str, timeout_seconds: int = 30) -> str:
     except Exception as exc:
         raise ValueError("Playwright is not available for dynamic page rendering") from exc
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context()
-        page = await context.new_page()
-        await page.goto(url, wait_until="networkidle", timeout=timeout_seconds * 1000)
-        # Extra wait for heavy JS-rendered sites like auto.ru
-        await asyncio.sleep(2)
-        html = await page.content()
-        await context.close()
-        await browser.close()
-        return html
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context()
+            page = await context.new_page()
+            await page.goto(url, wait_until="networkidle", timeout=timeout_seconds * 1000)
+            # Extra wait for heavy JS-rendered sites like auto.ru
+            await asyncio.sleep(2)
+            html = await page.content()
+            await context.close()
+            await browser.close()
+            return html
+    except Exception as exc:
+        raise ValueError("Playwright rendering failed") from exc
 
 
 async def fetch_page_html(url: str, use_playwright: bool = False, timeout_seconds: int = 20) -> str:
