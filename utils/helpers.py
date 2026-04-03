@@ -13,9 +13,10 @@ from dotenv import load_dotenv
 class Settings:
     telegram_bot_token: str
     http_timeout_seconds: int = 20
-    krw_per_usd: float = 1440.20
+    krw_per_usd: float | None = None
     fixed_usd_uzs: float | None = None
     admin_panel_key: str = "spidoznie_kozyavki"
+    manager_chat_url: str = "https://t.me/DO_sales_manager"
 
 
 @dataclass
@@ -40,11 +41,11 @@ def load_settings() -> Settings:
 
     timeout = int(os.getenv("HTTP_TIMEOUT_SECONDS", "20"))
 
-    krw_per_usd_raw = os.getenv("KRW_PER_USD", "1440.20").strip()
+    krw_per_usd_raw = os.getenv("KRW_PER_USD", "").strip()
     try:
-        krw_per_usd = float(krw_per_usd_raw)
+        krw_per_usd = float(krw_per_usd_raw) if krw_per_usd_raw else None
     except ValueError:
-        krw_per_usd = 1440.20
+        krw_per_usd = None
 
     fixed_usd_uzs_raw = os.getenv("FIXED_USD_UZS", "").strip()
     try:
@@ -52,12 +53,14 @@ def load_settings() -> Settings:
     except ValueError:
         fixed_usd_uzs = None
     admin_panel_key = os.getenv("ADMIN_PANEL_KEY", "spidoznie_kozyavki").strip() or "spidoznie_kozyavki"
+    manager_chat_url = os.getenv("MANAGER_CHAT_URL", "https://t.me/DO_sales_manager").strip() or "https://t.me/DO_sales_manager"
     return Settings(
         telegram_bot_token=token,
         http_timeout_seconds=timeout,
         krw_per_usd=krw_per_usd,
         fixed_usd_uzs=fixed_usd_uzs,
         admin_panel_key=admin_panel_key,
+        manager_chat_url=manager_chat_url,
     )
 
 

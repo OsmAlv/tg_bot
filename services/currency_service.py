@@ -10,7 +10,7 @@ class CurrencyService:
     def __init__(
         self,
         timeout_seconds: int = 20,
-        krw_per_usd: float = 1440.20,
+        krw_per_usd: float | None = None,
         fixed_usd_uzs: float | None = None,
     ) -> None:
         self.timeout_seconds = timeout_seconds
@@ -55,7 +55,9 @@ class CurrencyService:
         return rate
 
     async def krw_to_usd_rate(self) -> float:
-        return 1.0 / self.krw_per_usd
+        if self.krw_per_usd is not None:
+            return 1.0 / self.krw_per_usd
+        return await self._get_rate("KRW", "USD")
 
     async def usd_to_uzs_rate(self) -> float:
         if self.fixed_usd_uzs is not None:
@@ -63,7 +65,11 @@ class CurrencyService:
         return await self._get_rate("USD", "UZS")
 
     async def krw_to_usd(self, amount_krw: int | float) -> float:
-        return float(amount_krw) / self.krw_per_usd
+        value = float(amount_krw)
+        if self.krw_per_usd is not None:
+            return value / self.krw_per_usd
+        rate = await self._get_rate("KRW", "USD")
+        return value * rate
 
     async def source_to_usd(self, amount: int | float, currency: str = "KRW") -> float:
         normalized = (currency or "KRW").upper()

@@ -55,20 +55,22 @@ async def _send_with_photos(
     message: Message,
     text: str,
     photos: list[str],
+    reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
     if not photos:
-        await message.answer(text)
+        await message.answer(text, reply_markup=reply_markup)
         return
 
     media = [
-        InputMediaPhoto(media=url, caption=text if index == 0 else None)
+        InputMediaPhoto(media=url)
         for index, url in enumerate(photos[:10])
     ]
 
     try:
         await message.bot.send_media_group(chat_id=message.chat.id, media=media)
+        await message.answer(text, reply_markup=reply_markup)
     except TelegramBadRequest:
-        await message.answer(text)
+        await message.answer(text, reply_markup=reply_markup)
         for photo in photos[:5]:
             try:
                 await message.answer_photo(photo)
@@ -81,9 +83,17 @@ def register_handlers(
     currency_service: CurrencyService,
     price_calculator: PriceCalculator,
     admin_panel_key: str,
+    manager_chat_url: str,
 ) -> None:
     authorized_admin_chats: set[int] = set()
     pending_admin_action_by_chat: dict[int, str] = {}
+
+    def _manager_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💬 Написать менеджеру", url=manager_chat_url)],
+            ]
+        )
 
     def _admin_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
@@ -103,10 +113,15 @@ def register_handlers(
             if currency_service.fixed_usd_uzs is not None
             else "не фиксирован (онлайн)"
         )
+        krw_usd_value = (
+            f"{currency_service.krw_per_usd:.2f}"
+            if currency_service.krw_per_usd is not None
+            else "не фиксирован (онлайн)"
+        )
         return (
             "Текущие курсы:\n"
             f"• FIXED_USD_UZS: {usd_uzs_value}\n"
-            f"• KRW_PER_USD: {currency_service.krw_per_usd:.2f}"
+            f"• KRW_PER_USD: {krw_usd_value}"
         )
 
     async def _set_usd_uzs_rate(new_rate: float) -> None:
@@ -264,7 +279,7 @@ def register_handlers(
                 is_approximate=marketplace.value == "generic",
             )
 
-            await _send_with_photos(message, result_text, car.photos)
+            await _send_with_photos(message, result_text, car.photos, reply_markup=_manager_keyboard())
         except ValueError as exc:
             await message.answer(f"Не удалось обработать ссылку: {exc}")
         except Exception as exc:
@@ -289,7 +304,13 @@ async def main() -> None:
         fixed_usd_uzs=settings.fixed_usd_uzs,
     )
     price_calculator = PriceCalculator()
-    register_handlers(dp, currency_service, price_calculator, settings.admin_panel_key)
+    register_handlers(
+        dp,
+        currency_service,
+        price_calculator,
+        settings.admin_panel_key,
+        settings.manager_chat_url,
+    )
 
     await dp.start_polling(bot)
 
