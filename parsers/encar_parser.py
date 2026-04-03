@@ -139,8 +139,12 @@ def _parse_from_preloaded_state(html: str, url: str) -> CarInfo | None:
     brand = normalize_display_text(str(brand)) or "Unknown"
     model = normalize_display_text(str(model))
 
+    photos_sorted = sorted(
+        photos_data,
+        key=lambda p: int(p.get("sequence") or p.get("index") or p.get("seq") or 0),
+    )
     photos: list[str] = []
-    for item in photos_data:
+    for item in photos_sorted:
         path = item.get("path")
         if not path:
             continue

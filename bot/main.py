@@ -282,7 +282,7 @@ def register_handlers(
                 )
 
                 if len(urls) > 1:
-                    result_text = f"Ссылка {index}/{len(urls)}\n{url}\n\n{result_text}"
+                    result_text = f"Ссылка {index}/{len(urls)}\n\n{result_text}"
 
                 await _send_result(bot, message.chat.id, result_text, car.photos, reply_markup=_manager_keyboard())
 
