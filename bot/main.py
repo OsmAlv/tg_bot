@@ -6,7 +6,7 @@ import re
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Message
 
 from parsers import detect_marketplace, parse_listing
 from services.currency_service import CurrencyService
@@ -51,28 +51,34 @@ def build_car_message(
     return message
 
 
-async def _send_with_photos(
-    message: Message,
+async def _send_result(
+    bot: Bot,
+    chat_id: int | str,
     text: str,
     photos: list[str],
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
     if not photos:
-        await message.answer(text, reply_markup=reply_markup)
+        await bot.send_message(chat_id, text, reply_markup=reply_markup)
         return
 
     try:
-        await message.answer_photo(photos[0], caption=text, reply_markup=reply_markup)
+        media = [InputMediaPhoto(media=photo) for photo in photos[:10]]
+        await bot.send_media_group(chat_id, media=media)
     except TelegramBadRequest:
-        await message.answer(text, reply_markup=reply_markup)
+        logger.warning("Failed to send photo album", extra={"chat_id": chat_id}, exc_info=True)
+
+    await bot.send_message(chat_id, text, reply_markup=reply_markup)
 
 
 def register_handlers(
+    bot: Bot,
     dp: Dispatcher,
     currency_service: CurrencyService,
     price_calculator: PriceCalculator,
     admin_panel_key: str,
     manager_chat_url: str,
+    autopost_channel: str | None,
 ) -> None:
     authorized_admin_chats: set[int] = set()
     pending_admin_action_by_chat: dict[int, str] = {}
@@ -268,7 +274,15 @@ def register_handlers(
                 is_approximate=marketplace.value == "generic",
             )
 
-            await _send_with_photos(message, result_text, car.photos, reply_markup=_manager_keyboard())
+            await _send_result(bot, message.chat.id, result_text, car.photos, reply_markup=_manager_keyboard())
+
+            if autopost_channel:
+                try:
+                    await _send_result(bot, autopost_channel, result_text, car.photos, reply_markup=_manager_keyboard())
+                    await message.answer(f"Также опубликовал в канал: {autopost_channel}")
+                except Exception as exc:
+                    logger.exception("Failed to autopost result to channel", exc_info=exc)
+                    await message.answer("Результат отправлен вам, но не удалось опубликовать его в канал.")
         except ValueError as exc:
             await message.answer(f"Не удалось обработать ссылку: {exc}")
         except Exception as exc:
@@ -294,11 +308,13 @@ async def main() -> None:
     )
     price_calculator = PriceCalculator()
     register_handlers(
+        bot,
         dp,
         currency_service,
         price_calculator,
         settings.admin_panel_key,
         settings.manager_chat_url,
+        settings.autopost_channel,
     )
 
     await dp.start_polling(bot)

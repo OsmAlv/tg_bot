@@ -17,6 +17,7 @@ class Settings:
     fixed_usd_uzs: float | None = None
     admin_panel_key: str = "spidoznie_kozyavki"
     manager_chat_url: str = "https://t.me/DO_sales_manager"
+    autopost_channel: str | None = None
 
 
 @dataclass
@@ -54,6 +55,8 @@ def load_settings() -> Settings:
         fixed_usd_uzs = None
     admin_panel_key = os.getenv("ADMIN_PANEL_KEY", "spidoznie_kozyavki").strip() or "spidoznie_kozyavki"
     manager_chat_url = os.getenv("MANAGER_CHAT_URL", "https://t.me/DO_sales_manager").strip() or "https://t.me/DO_sales_manager"
+    autopost_channel_raw = os.getenv("AUTOPOST_CHANNEL", "").strip()
+    autopost_channel = autopost_channel_raw or None
     return Settings(
         telegram_bot_token=token,
         http_timeout_seconds=timeout,
@@ -61,6 +64,7 @@ def load_settings() -> Settings:
         fixed_usd_uzs=fixed_usd_uzs,
         admin_panel_key=admin_panel_key,
         manager_chat_url=manager_chat_url,
+        autopost_channel=autopost_channel,
     )
 
 
