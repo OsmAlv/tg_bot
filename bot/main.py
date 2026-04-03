@@ -5,7 +5,7 @@ import logging
 import re
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Message
 
 from parsers import detect_marketplace, parse_listing
@@ -52,6 +52,19 @@ def build_car_message(
     return message
 
 
+async def _api_call_with_retry(coro_factory, max_retries: int = 3):
+    """Call coro_factory() and retry on TelegramRetryAfter, waiting the required time."""
+    for attempt in range(max_retries + 1):
+        try:
+            return await coro_factory()
+        except TelegramRetryAfter as exc:
+            if attempt >= max_retries:
+                raise
+            wait = exc.retry_after + 2
+            logger.warning("Flood control exceeded, waiting %d seconds (attempt %d/%d)...", wait, attempt + 1, max_retries)
+            await asyncio.sleep(wait)
+
+
 async def _send_result(
     bot: Bot,
     chat_id: int | str,
@@ -60,16 +73,17 @@ async def _send_result(
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
     if not photos:
-        await bot.send_message(chat_id, text, reply_markup=reply_markup)
+        await _api_call_with_retry(lambda: bot.send_message(chat_id, text, reply_markup=reply_markup))
         return
 
     try:
         media = [InputMediaPhoto(media=photo) for photo in photos[:10]]
-        await bot.send_media_group(chat_id, media=media)
+        await _api_call_with_retry(lambda: bot.send_media_group(chat_id, media=media))
     except TelegramBadRequest:
         logger.warning("Failed to send photo album", extra={"chat_id": chat_id}, exc_info=True)
 
-    await bot.send_message(chat_id, text, reply_markup=reply_markup)
+    await asyncio.sleep(1)  # small gap between album and caption message
+    await _api_call_with_retry(lambda: bot.send_message(chat_id, text, reply_markup=reply_markup))
 
 
 def register_handlers(
@@ -241,18 +255,31 @@ def register_handlers(
         if not urls:
             return
 
+        BATCH_DELAY = 3  # seconds between links to stay within Telegram rate limits
+        BATCH_NOTIFY_THRESHOLD = 3  # suppress per-link status when batch is larger than this
+        large_batch = len(urls) > BATCH_NOTIFY_THRESHOLD
+
         if len(urls) == 1:
             await message.answer("Обрабатываю ссылку, подождите...")
         else:
-            await message.answer(f"Нашел {len(urls)} ссылок. Обрабатываю по очереди...")
+            await message.answer(f"Нашел {len(urls)} ссылок. Обрабатываю по очереди, это займёт некоторое время...")
+
+        posted_to_channel = 0
+        failed_indices: list[int] = []
 
         for index, url in enumerate(urls, start=1):
+            if index > 1:
+                await asyncio.sleep(BATCH_DELAY)  # pause between links to avoid flood control
+
             marketplace = detect_marketplace(url)
             if marketplace is None:
-                await message.answer(f"Ссылка {index}: не удалось распознать ссылку.")
+                if not large_batch:
+                    await message.answer(f"Ссылка {index}: не удалось распознать ссылку.")
+                else:
+                    failed_indices.append(index)
                 continue
 
-            if len(urls) > 1:
+            if len(urls) > 1 and not large_batch:
                 await message.answer(f"Обрабатываю ссылку {index}/{len(urls)}...")
 
             try:
@@ -287,16 +314,38 @@ def register_handlers(
 
                 if autopost_channel:
                     try:
+                        await asyncio.sleep(1)  # extra gap before posting to channel
                         await _send_result(bot, autopost_channel, result_text, car.photos, reply_markup=_manager_keyboard())
-                        await message.answer(f"Ссылка {index}: также опубликовал в канал: {autopost_channel}")
+                        posted_to_channel += 1
+                        if not large_batch:
+                            await message.answer(f"Ссылка {index}: также опубликовал в канал: {autopost_channel}")
                     except Exception as exc:
                         logger.exception("Failed to autopost result to channel", exc_info=exc)
-                        await message.answer(f"Ссылка {index}: результат отправлен вам, но не удалось опубликовать его в канал.")
+                        if not large_batch:
+                            await message.answer(f"Ссылка {index}: результат отправлен вам, но не удалось опубликовать его в канал.")
             except ValueError as exc:
-                await message.answer(f"Ссылка {index}: не удалось обработать ссылку: {exc}")
+                if not large_batch:
+                    await message.answer(f"Ссылка {index}: не удалось обработать ссылку: {exc}")
+                else:
+                    failed_indices.append(index)
+            except TelegramRetryAfter:
+                raise  # let it propagate — already retried inside _send_result
             except Exception as exc:
                 logger.exception("Unexpected error while parsing listing", exc_info=exc)
-                await message.answer(f"Ссылка {index}: ошибка при парсинге. Попробуйте другую ссылку немного позже.")
+                if not large_batch:
+                    await message.answer(f"Ссылка {index}: ошибка при парсинге. Попробуйте другую ссылку немного позже.")
+                else:
+                    failed_indices.append(index)
+
+        # Send summary for large batches
+        if large_batch:
+            ok_count = len(urls) - len(failed_indices)
+            summary = f"✅ Обработано {ok_count}/{len(urls)} ссылок."
+            if autopost_channel and posted_to_channel:
+                summary += f" Опубликовано в {autopost_channel}: {posted_to_channel}."
+            if failed_indices:
+                summary += f"\n⚠️ Не удалось обработать ссылки: {', '.join(map(str, failed_indices))}."
+            await message.answer(summary)
 
 
 async def main() -> None:
