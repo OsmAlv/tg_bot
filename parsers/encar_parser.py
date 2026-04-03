@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from parsers.common import normalize_display_text, parse_car_from_html
 from utils.helpers import CarInfo, fetch_page_html
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_json_object(text: str, start_index: int) -> str | None:
@@ -141,8 +144,13 @@ def _parse_from_preloaded_state(html: str, url: str) -> CarInfo | None:
 
     photos_sorted = sorted(
         photos_data,
-        key=lambda p: int(p.get("sequence") or p.get("index") or p.get("seq") or 0),
+        key=lambda p: (
+            0 if p.get("represent") or p.get("isRepresent") or p.get("representYn") == "Y" else 1,
+            int(p.get("sequence") or p.get("index") or p.get("seq") or p.get("no") or 0),
+        ),
     )
+    if photos_data:
+        logger.info("Encar photo keys sample: %s", list(photos_data[0].keys()))
     photos: list[str] = []
     for item in photos_sorted:
         path = item.get("path")

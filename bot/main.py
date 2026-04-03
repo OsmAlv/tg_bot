@@ -281,9 +281,6 @@ def register_handlers(
                     is_approximate=marketplace.value == "generic",
                 )
 
-                if len(urls) > 1:
-                    result_text = f"Ссылка {index}/{len(urls)}\n\n{result_text}"
-
                 await _send_result(bot, message.chat.id, result_text, car.photos, reply_markup=_manager_keyboard())
 
                 if autopost_channel:
