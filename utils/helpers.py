@@ -91,10 +91,14 @@ def set_env_value(key: str, value: str, env_path: str = ".env") -> None:
         f.write("\n".join(new_lines) + "\n")
 
 
-def extract_first_url(text: str) -> str | None:
+def extract_urls(text: str) -> list[str]:
     url_regex = r"https?://[^\s]+"
-    match = re.search(url_regex, text)
-    return match.group(0).strip() if match else None
+    return [match.strip() for match in re.findall(url_regex, text)]
+
+
+def extract_first_url(text: str) -> str | None:
+    urls = extract_urls(text)
+    return urls[0] if urls else None
 
 
 def format_money_usd(value: float) -> str:

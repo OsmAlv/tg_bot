@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from parsers import detect_marketplace, parse_listing
 from services.currency_service import CurrencyService
 from services.price_calculator import PriceCalculator
-from utils.helpers import extract_first_url, format_money_usd, load_settings, set_env_value
+from utils.helpers import extract_urls, format_money_usd, load_settings, set_env_value
 
 
 logger = logging.getLogger(__name__)
@@ -235,59 +235,69 @@ def register_handlers(
                 await message.answer(f"KRW_PER_USD обновлен: {value:.2f}", reply_markup=_admin_keyboard())
             return
 
-        url = extract_first_url(text)
+        urls = extract_urls(text)
 
-        if not url:
+        if not urls:
             return
 
-        marketplace = detect_marketplace(url)
-        if marketplace is None:
-            await message.answer("Не удалось распознать ссылку. Отправьте полную ссылку на объявление автомобиля.")
-            return
+        if len(urls) == 1:
+            await message.answer("Обрабатываю ссылку, подождите...")
+        else:
+            await message.answer(f"Нашел {len(urls)} ссылок. Обрабатываю по очереди...")
 
-        await message.answer("Обрабатываю ссылку, подождите...")
+        for index, url in enumerate(urls, start=1):
+            marketplace = detect_marketplace(url)
+            if marketplace is None:
+                await message.answer(f"Ссылка {index}: не удалось распознать ссылку.")
+                continue
 
-        try:
-            car = await parse_listing(url, marketplace)
-            price_korea_usd = await currency_service.source_to_usd(
-                car.price_won,
-                car.price_currency,
-            )
-            usd_uzs = await currency_service.usd_to_uzs_rate()
+            if len(urls) > 1:
+                await message.answer(f"Обрабатываю ссылку {index}/{len(urls)}...")
 
-            price_result = price_calculator.calculate(
-                car_price_usd=price_korea_usd,
-                car_year=car.year,
-                engine_cc=car.engine_cc,
-                usd_uzs=usd_uzs,
-            )
+            try:
+                car = await parse_listing(url, marketplace)
+                price_korea_usd = await currency_service.source_to_usd(
+                    car.price_won,
+                    car.price_currency,
+                )
+                usd_uzs = await currency_service.usd_to_uzs_rate()
 
-            result_text = build_car_message(
-                brand=car.brand,
-                model=car.model,
-                year=car.year,
-                mileage_km=car.mileage_km,
-                engine_cc=car.engine_cc,
-                fuel_type=car.fuel_type,
-                price_korea_usd=price_korea_usd,
-                final_price_usd=price_result.final_price_usd,
-                is_approximate=marketplace.value == "generic",
-            )
+                price_result = price_calculator.calculate(
+                    car_price_usd=price_korea_usd,
+                    car_year=car.year,
+                    engine_cc=car.engine_cc,
+                    usd_uzs=usd_uzs,
+                )
 
-            await _send_result(bot, message.chat.id, result_text, car.photos, reply_markup=_manager_keyboard())
+                result_text = build_car_message(
+                    brand=car.brand,
+                    model=car.model,
+                    year=car.year,
+                    mileage_km=car.mileage_km,
+                    engine_cc=car.engine_cc,
+                    fuel_type=car.fuel_type,
+                    price_korea_usd=price_korea_usd,
+                    final_price_usd=price_result.final_price_usd,
+                    is_approximate=marketplace.value == "generic",
+                )
 
-            if autopost_channel:
-                try:
-                    await _send_result(bot, autopost_channel, result_text, car.photos, reply_markup=_manager_keyboard())
-                    await message.answer(f"Также опубликовал в канал: {autopost_channel}")
-                except Exception as exc:
-                    logger.exception("Failed to autopost result to channel", exc_info=exc)
-                    await message.answer("Результат отправлен вам, но не удалось опубликовать его в канал.")
-        except ValueError as exc:
-            await message.answer(f"Не удалось обработать ссылку: {exc}")
-        except Exception as exc:
-            logger.exception("Unexpected error while parsing listing", exc_info=exc)
-            await message.answer("Ошибка при парсинге. Попробуйте другую ссылку немного позже.")
+                if len(urls) > 1:
+                    result_text = f"Ссылка {index}/{len(urls)}\n{url}\n\n{result_text}"
+
+                await _send_result(bot, message.chat.id, result_text, car.photos, reply_markup=_manager_keyboard())
+
+                if autopost_channel:
+                    try:
+                        await _send_result(bot, autopost_channel, result_text, car.photos, reply_markup=_manager_keyboard())
+                        await message.answer(f"Ссылка {index}: также опубликовал в канал: {autopost_channel}")
+                    except Exception as exc:
+                        logger.exception("Failed to autopost result to channel", exc_info=exc)
+                        await message.answer(f"Ссылка {index}: результат отправлен вам, но не удалось опубликовать его в канал.")
+            except ValueError as exc:
+                await message.answer(f"Ссылка {index}: не удалось обработать ссылку: {exc}")
+            except Exception as exc:
+                logger.exception("Unexpected error while parsing listing", exc_info=exc)
+                await message.answer(f"Ссылка {index}: ошибка при парсинге. Попробуйте другую ссылку немного позже.")
 
 
 async def main() -> None:

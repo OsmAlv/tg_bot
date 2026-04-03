@@ -26,7 +26,14 @@ HTTP_TIMEOUT_SECONDS=20
 KRW_PER_USD=1440.20
 FIXED_USD_UZS=12091.22
 ADMIN_PANEL_KEY=spidoznie_kozyavki
+MANAGER_CHAT_URL=https://t.me/DO_sales_manager
+AUTOPOST_CHANNEL=@your_channel_username
 ```
+
+Важно:
+- Railway не использует локальный `.env` из компьютера при деплое.
+- `.env.example` — это только шаблон для тебя, а не реальные переменные Railway.
+- После добавления или изменения переменных в Railway нужен `Redeploy` или `Restart` сервиса.
 
 ### 4. Деплой
 - Railway автоматически обнаружит `Procfile` и `requirements.txt`

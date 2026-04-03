@@ -3,9 +3,24 @@ import unittest
 from parsers import Marketplace, detect_marketplace
 from parsers.common import parse_car_from_html
 from services.price_calculator import PriceCalculator
+from utils.helpers import extract_urls
 
 
 class TestCoreLogic(unittest.TestCase):
+    def test_extract_urls_returns_all_links(self) -> None:
+        text = (
+            "https://www.encar.com/dc/dc_cardetailview.do?carid=123\n"
+            "и еще https://www.kcar.com/bc/detail/car/456"
+        )
+
+        self.assertEqual(
+            extract_urls(text),
+            [
+                "https://www.encar.com/dc/dc_cardetailview.do?carid=123",
+                "https://www.kcar.com/bc/detail/car/456",
+            ],
+        )
+
     def test_detect_marketplace(self) -> None:
         self.assertEqual(
             detect_marketplace("https://www.encar.com/dc/dc_cardetailview.do?carid=123"),
