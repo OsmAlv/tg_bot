@@ -6,7 +6,7 @@ import re
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from parsers import detect_marketplace, parse_listing
 from services.currency_service import CurrencyService
@@ -61,21 +61,10 @@ async def _send_with_photos(
         await message.answer(text, reply_markup=reply_markup)
         return
 
-    media = [
-        InputMediaPhoto(media=url)
-        for index, url in enumerate(photos[:10])
-    ]
-
     try:
-        await message.bot.send_media_group(chat_id=message.chat.id, media=media)
-        await message.answer(text, reply_markup=reply_markup)
+        await message.answer_photo(photos[0], caption=text, reply_markup=reply_markup)
     except TelegramBadRequest:
         await message.answer(text, reply_markup=reply_markup)
-        for photo in photos[:5]:
-            try:
-                await message.answer_photo(photo)
-            except TelegramBadRequest:
-                continue
 
 
 def register_handlers(
