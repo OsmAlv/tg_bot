@@ -37,8 +37,9 @@ def build_car_message(
         f"⛽ Топливо: {fuel_type}\n\n"
         f"🚢 Доставка: от 1 месяца\n\n"
         f"💰 Цена в Корее: {format_money_usd(price_korea_usd)} $\n\n"
-        f"💵 Цена под ключ в Ташкент:\n"
-        f"{format_money_usd(final_price_usd)} $"
+        f"Ориентировочная цена под ключ в Ташкент:\n"
+        f"{format_money_usd(final_price_usd)} $\n\n"
+        "🤝 Для персонального и максимально точного расчета обратитесь к менеджеру."
     )
 
     if is_approximate:
