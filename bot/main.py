@@ -267,6 +267,7 @@ def register_handlers(
                     car_year=car.year,
                     engine_cc=car.engine_cc,
                     usd_uzs=usd_uzs,
+                    fuel_type=car.fuel_type,
                 )
 
                 result_text = build_car_message(

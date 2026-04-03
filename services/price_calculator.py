@@ -15,6 +15,105 @@ class PriceResult:
 
 
 class PriceCalculator:
+    def _normalize_fuel_type(self, fuel_type: str | None) -> str:
+        if not fuel_type:
+            return "gasoline"
+
+        text = fuel_type.strip().lower()
+
+        has_electric = any(token in text for token in ["элект", "electric", "전기", "ev"])
+        has_combustion = any(token in text for token in ["бенз", "gasoline", "petrol", "가솔", "휘발유", "диз", "diesel", "경유", "디젤"])
+
+        # Plug-in / смешанный тип (бензин+электро, дизель+электро) считаем гибридом.
+        if any(token in text for token in ["гиб", "hybrid", "하이브리드", "plug-in", "plug in", "phev"]) or (has_electric and has_combustion):
+            return "hybrid"
+
+        if any(token in text for token in ["диз", "diesel", "경유", "디젤"]):
+            return "diesel"
+        if any(token in text for token in ["элект", "electric", "전기", "ev"]):
+            return "electric"
+        return "gasoline"
+
+    def _get_under_1_year_rules(self, engine_cc: int, fuel_type: str | None) -> tuple[float, float, float, bool]:
+        """
+        Возвращает параметры расчёта для авто до 1 года:
+        (ad_valorem_percent, per_cc_usd, utilization_brv, use_cif_base)
+
+        use_cif_base=False означает, что пошлина/НДС считаются от цены авто без доставки,
+        как в кейсе @autodeklarantbot для дизеля.
+        """
+        fuel = self._normalize_fuel_type(fuel_type)
+
+        # Подтвержденный кейс @autodeklarantbot:
+        # Дизель, до 1 года -> 30% + 1.6$/cc, утиль 180 БРВ, база без доставки.
+        if fuel == "diesel":
+            return 0.30, 1.6, 180, False
+
+        # Подтвержденный кейс @autodeklarantbot:
+        # Электро, до 1 года -> пошлина 0%, НДС с цены авто (без доставки), утиль 120 БРВ.
+        if fuel == "electric":
+            return 0.0, 0.0, 120, False
+
+        # Подтвержденный кейс @autodeklarantbot:
+        # Гибрид (PHEV), до 1 года -> 30% + 0$/cc, утиль 180 БРВ, база без доставки.
+        if fuel == "hybrid":
+            return 0.30, 0.0, 180, False
+
+        # Базовая схема для бензина/прочего.
+        per_cc_usd = 2.0 if engine_cc <= 3000 else 2.5
+        utilization_brv = 120 if engine_cc <= 3000 else 300
+        return 0.30, per_cc_usd, utilization_brv, True
+
+    def _get_1_to_3_year_rules(self, fuel_type: str | None) -> tuple[float, float, float, bool]:
+        """
+        Возвращает параметры расчёта для авто 1-3 года:
+        (ad_valorem_percent, per_cc_usd, utilization_brv, use_cif_base)
+        """
+        fuel = self._normalize_fuel_type(fuel_type)
+
+        # Подтвержденный кейс @autodeklarantbot:
+        # Дизель, 1-3 года -> 60% + 5$/cc, утиль 180 БРВ, база без доставки.
+        if fuel == "diesel":
+            return 0.60, 5.0, 180, False
+
+        # Подтвержденный кейс @autodeklarantbot:
+        # Электро, 1-3 года -> пошлина 0%, НДС с цены авто (без доставки), утиль 120 БРВ.
+        if fuel == "electric":
+            return 0.0, 0.0, 120, False
+
+        # Подтвержденный кейс @autodeklarantbot:
+        # Гибрид, 1-3 года -> 60% + 0$/cc, утиль 180 БРВ, база без доставки.
+        if fuel == "hybrid":
+            return 0.60, 0.0, 180, False
+
+        # Базовая схема (бензин/прочее)
+        return 0.60, 6.0, 300, True
+
+    def _get_over_3_year_rules(self, engine_cc: int, fuel_type: str | None) -> tuple[float, float, float, bool]:
+        """
+        Возвращает параметры расчёта для авто старше 3 лет:
+        (ad_valorem_percent, per_cc_usd, utilization_brv, use_cif_base)
+        """
+        fuel = self._normalize_fuel_type(fuel_type)
+
+        # Подтвержденный кейс @autodeklarantbot:
+        # Дизель, >3 лет -> 80% + 6$/cc, утиль 330 БРВ, база без доставки.
+        if fuel == "diesel":
+            return 0.80, 6.0, 330, False
+
+        # Подтвержденный кейс @autodeklarantbot:
+        # Электро, >3 лет -> пошлина 0%, НДС с цены авто (без доставки), утиль 210 БРВ.
+        if fuel == "electric":
+            return 0.0, 0.0, 210, False
+
+        # Подтвержденный кейс @autodeklarantbot:
+        # Гибрид, >3 лет -> 60% + 0$/cc, утиль 390 БРВ, база без доставки.
+        if fuel == "hybrid":
+            return 0.60, 0.0, 390, False
+
+        # Базовая схема (бензин/прочее)
+        return 0.80, 6.0, self._get_utilization_brv_over_3_years(engine_cc), True
+
     def _brv_to_usd(self, brv_amount: float, usd_uzs: float) -> float:
         return (brv_amount * BRV_UZS) / usd_uzs
 
@@ -112,6 +211,7 @@ class PriceCalculator:
         engine_cc: int,
         usd_uzs: float,
         duty_multiplier: float = 1.0,
+        fuel_type: str | None = None,
     ) -> float:
         """
         Таможенный расчёт для автомобилей до 1 года.
@@ -119,14 +219,13 @@ class PriceCalculator:
         таможенный сбор (по CIF) + утилизация 120/300 БРВ (по объёму).
         Пошлина и НДС рассчитываются на CIF (цена + доставка).
         """
-        per_cc_usd = 2.0 if engine_cc <= 3000 else 2.5
-        utilization_brv = 120 if engine_cc <= 3000 else 300
+        ad_valorem, per_cc_usd, utilization_brv, use_cif_base = self._get_under_1_year_rules(engine_cc, fuel_type)
         cif_value = car_price_usd + DELIVERY_USD  # для расчета таможенного сбора
         customs_service_brv = self._get_service_brv(cif_value)
 
-        # Пошлина и НДС на базе CIF (цена + доставка)
-        customs_duty = ((0.30 * cif_value) + (per_cc_usd * engine_cc)) * duty_multiplier
-        vat = 0.12 * (cif_value + customs_duty)
+        duty_vat_base = cif_value if use_cif_base else car_price_usd
+        customs_duty = ((ad_valorem * duty_vat_base) + (per_cc_usd * engine_cc)) * duty_multiplier
+        vat = 0.12 * (duty_vat_base + customs_duty)
         utilization_fee = self._brv_to_usd(utilization_brv, usd_uzs)
         customs_service_fee = self._brv_to_usd(customs_service_brv, usd_uzs)
         return customs_duty + vat + utilization_fee + customs_service_fee
@@ -137,6 +236,7 @@ class PriceCalculator:
         engine_cc: int,
         usd_uzs: float,
         duty_multiplier: float = 1.0,
+        fuel_type: str | None = None,
     ) -> float:
         """
         Таможенный расчёт для автомобилей 1-3 года.
@@ -144,14 +244,14 @@ class PriceCalculator:
         таможенный сбор (по CIF) + утилизация 300 БРВ.
         Пошлина и НДС рассчитываются на CIF (цена + доставка).
         """
-        per_cc_usd = 6.0
+        ad_valorem, per_cc_usd, utilization_brv, use_cif_base = self._get_1_to_3_year_rules(fuel_type)
         cif_value = car_price_usd + DELIVERY_USD  # для расчета таможенного сбора
         customs_service_brv = self._get_service_brv(cif_value)
 
-        # Пошлина и НДС на базе CIF (цена + доставка)
-        customs_duty = ((0.60 * cif_value) + (per_cc_usd * engine_cc)) * duty_multiplier
-        vat = 0.12 * (cif_value + customs_duty)
-        utilization_fee = self._brv_to_usd(300, usd_uzs)
+        duty_vat_base = cif_value if use_cif_base else car_price_usd
+        customs_duty = ((ad_valorem * duty_vat_base) + (per_cc_usd * engine_cc)) * duty_multiplier
+        vat = 0.12 * (duty_vat_base + customs_duty)
+        utilization_fee = self._brv_to_usd(utilization_brv, usd_uzs)
         customs_service_fee = self._brv_to_usd(customs_service_brv, usd_uzs)
         return customs_duty + vat + utilization_fee + customs_service_fee
 
@@ -161,6 +261,7 @@ class PriceCalculator:
         engine_cc: int,
         usd_uzs: float,
         duty_multiplier: float = 1.0,
+        fuel_type: str | None = None,
     ) -> float:
         """
         Таможенный расчёт для автомобилей более 3 лет.
@@ -168,13 +269,13 @@ class PriceCalculator:
         таможенный сбор (по CIF) + утилизация по объёму.
         Пошлина и НДС рассчитываются на CIF (цена + доставка).
         """
-        utilization_brv = self._get_utilization_brv_over_3_years(engine_cc)
+        ad_valorem, per_cc_usd, utilization_brv, use_cif_base = self._get_over_3_year_rules(engine_cc, fuel_type)
         cif_value = car_price_usd + DELIVERY_USD  # для расчета таможенного сбора
         customs_service_brv = self._get_service_brv(cif_value)
 
-        # Пошлина и НДС на базе CIF (цена + доставка)
-        customs_duty = ((0.80 * cif_value) + (6.0 * engine_cc)) * duty_multiplier
-        vat = 0.12 * (cif_value + customs_duty)
+        duty_vat_base = cif_value if use_cif_base else car_price_usd
+        customs_duty = ((ad_valorem * duty_vat_base) + (per_cc_usd * engine_cc)) * duty_multiplier
+        vat = 0.12 * (duty_vat_base + customs_duty)
         utilization_fee = self._brv_to_usd(utilization_brv, usd_uzs)
         customs_service_fee = self._brv_to_usd(customs_service_brv, usd_uzs)
         return customs_duty + vat + utilization_fee + customs_service_fee
@@ -191,6 +292,7 @@ class PriceCalculator:
         engine_cc: int,
         usd_uzs: float,
         duty_multiplier: float | None = None,
+        fuel_type: str | None = None,
     ) -> PriceResult:
         age = self._detect_car_age(car_year)
         resolved_multiplier = self._resolve_duty_multiplier(duty_multiplier)
@@ -201,6 +303,7 @@ class PriceCalculator:
                 engine_cc,
                 usd_uzs,
                 duty_multiplier=resolved_multiplier,
+                fuel_type=fuel_type,
             )
         elif age <= 3:
             customs = self._customs_1_to_3_years(
@@ -208,6 +311,7 @@ class PriceCalculator:
                 engine_cc,
                 usd_uzs,
                 duty_multiplier=resolved_multiplier,
+                fuel_type=fuel_type,
             )
         else:
             customs = self._customs_over_3_years(
@@ -215,6 +319,7 @@ class PriceCalculator:
                 engine_cc,
                 usd_uzs,
                 duty_multiplier=resolved_multiplier,
+                fuel_type=fuel_type,
             )
 
         subtotal = car_price_usd + DELIVERY_USD + customs
