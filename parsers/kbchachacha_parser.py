@@ -252,7 +252,5 @@ async def parse_kbchachacha_listing(url: str) -> CarInfo:
             try:
                 list_html = await fetch_page_html("https://www.kbchachacha.com/public/search/list.empty", use_playwright=False)
                 return _parse_from_kb_list_empty(list_html, url)
-            except Exception:
-                # Last resort: JS fallback
-                rendered_html = await fetch_page_html(url, use_playwright=True)
-                return _parse_kb_html(rendered_html, url)
+            except Exception as exc:
+                raise ValueError("KB: unable to parse listing from static sources") from exc

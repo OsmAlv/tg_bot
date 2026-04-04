@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -209,8 +210,8 @@ async def run_market_watch(
                 posted_for_preset += 1
                 result.posted += 1
                 await asyncio.sleep(2)
-            except Exception:
-                logger.exception("Failed to process listing: %s", listing_url)
+            except Exception as exc:
+                logger.warning("Failed to process listing: %s (%s)", listing_url, exc)
 
     return result
 
@@ -247,21 +248,24 @@ async def _extract_listing_urls_from_page(url: str) -> list[str]:
             logger.info("Extracted %d candidate listing URLs from KB list endpoint", len(deduped))
             return deduped
         except Exception:
-            logger.warning("KB list endpoint extraction failed", exc_info=True)
+            logger.warning("KB list endpoint extraction failed")
 
     html = await fetch_page_html(url, use_playwright=False)
     deduped = _extract_listing_urls_from_html(html, url)
 
     # Search pages are often JS-rendered; if static HTML gives too few links, retry with Playwright.
     is_search_like = any(token in url.lower() for token in ("search", "carsearchlist", "main.kbc", "#!"))
-    if is_search_like and len(deduped) < 5:
+    disable_playwright = os.getenv("AUTO_SCAN_DISABLE_PLAYWRIGHT", "1").strip().lower() in {"1", "true", "yes"}
+    if is_search_like and len(deduped) < 5 and not disable_playwright:
         try:
             rendered_html = await fetch_page_html(url, use_playwright=True)
             rendered_urls = _extract_listing_urls_from_html(rendered_html, url)
             if len(rendered_urls) > len(deduped):
                 deduped = rendered_urls
         except Exception:
-            logger.warning("Playwright extraction failed for search page: %s", url, exc_info=True)
+            logger.warning("Playwright extraction failed for search page: %s", url)
+    elif is_search_like and len(deduped) < 5 and disable_playwright:
+        logger.info("Playwright disabled for auto-scan; using static extraction only for %s", url)
 
     logger.info("Extracted %d candidate listing URLs from %s", len(deduped), url)
     return deduped
