@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import html as html_lib
 import json
 import logging
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlencode, urlparse
@@ -57,6 +59,34 @@ class WatchResult:
     checked: int = 0
     matched: int = 0
     posted: int = 0
+
+
+@dataclass
+class CandidateListing:
+    listing_url: str
+    source_search_url: str
+
+
+@dataclass
+class WatchTableRow:
+    timestamp_utc: str
+    preset: str
+    source_search_url: str
+    listing_url: str
+    seen_key: str
+    marketplace: str
+    status: str
+    reason: str
+    telegram_post_url: str = ""
+    brand: str = ""
+    model: str = ""
+    year: str = ""
+    production_year_month: str = ""
+    mileage_km: str = ""
+    engine_cc: str = ""
+    fuel_type: str = ""
+    price_korea_usd: str = ""
+    final_price_usd: str = ""
 
 
 def load_watch_presets(config_path: str | Path) -> list[WatchPreset]:
@@ -132,6 +162,79 @@ def save_seen_urls(state_path: str | Path, seen_urls: set[str]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _build_telegram_post_url(channel_id: str | int, message_id: int) -> str:
+    channel_text = str(channel_id).strip()
+    if channel_text.startswith("@"):
+        return f"https://t.me/{channel_text[1:]}/{message_id}"
+
+    # Fallback for numeric channel IDs: -100xxxxxxxxxx -> t.me/c/xxxxxxxxxx/<message_id>
+    if channel_text.startswith("-100") and channel_text[4:].isdigit():
+        return f"https://t.me/c/{channel_text[4:]}/{message_id}"
+    if channel_text.startswith("-") and channel_text[1:].isdigit():
+        return f"https://t.me/c/{channel_text[1:]}/{message_id}"
+
+    return ""
+
+
+def save_watch_results_table(results_path: str | Path, rows: list[WatchTableRow]) -> None:
+    path = Path(results_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "timestamp_utc",
+        "preset",
+        "source_search_url",
+        "listing_url",
+        "seen_key",
+        "marketplace",
+        "status",
+        "reason",
+        "telegram_post_url",
+        "brand",
+        "model",
+        "year",
+        "production_year_month",
+        "mileage_km",
+        "engine_cc",
+        "fuel_type",
+        "price_korea_usd",
+        "final_price_usd",
+    ]
+
+    file_exists = path.exists()
+    with path.open("a", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    "timestamp_utc": row.timestamp_utc,
+                    "preset": row.preset,
+                    "source_search_url": row.source_search_url,
+                    "listing_url": row.listing_url,
+                    "seen_key": row.seen_key,
+                    "marketplace": row.marketplace,
+                    "status": row.status,
+                    "reason": row.reason,
+                    "telegram_post_url": row.telegram_post_url,
+                    "brand": row.brand,
+                    "model": row.model,
+                    "year": row.year,
+                    "production_year_month": row.production_year_month,
+                    "mileage_km": row.mileage_km,
+                    "engine_cc": row.engine_cc,
+                    "fuel_type": row.fuel_type,
+                    "price_korea_usd": row.price_korea_usd,
+                    "final_price_usd": row.final_price_usd,
+                }
+            )
+
+
 async def run_market_watch(
     bot: Bot,
     channel_id: str,
@@ -142,6 +245,8 @@ async def run_market_watch(
     seen_urls: set[str],
 ) -> WatchResult:
     result = WatchResult()
+    table_rows: list[WatchTableRow] = []
+    results_path = os.getenv("AUTO_SCAN_RESULTS_PATH", "data/autopost_results.csv")
 
     manager_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="💬 Написать менеджеру", url=manager_chat_url)]]
@@ -156,15 +261,40 @@ async def run_market_watch(
             max_candidates_per_url=preset.max_candidates_per_url,
         )
 
-        for listing_url in candidate_urls:
+        for candidate in candidate_urls:
+            listing_url = candidate.listing_url
             seen_key = _listing_seen_key(listing_url)
             if listing_url in seen_urls or seen_key in seen_urls:
+                table_rows.append(
+                    WatchTableRow(
+                        timestamp_utc=_utc_now_iso(),
+                        preset=preset.name,
+                        source_search_url=candidate.source_search_url,
+                        listing_url=listing_url,
+                        seen_key=seen_key,
+                        marketplace="",
+                        status="skipped_seen",
+                        reason="already in seen state",
+                    )
+                )
                 continue
             if posted_for_preset >= preset.max_posts_per_run:
                 break
 
             marketplace = detect_marketplace(listing_url)
             if marketplace is None:
+                table_rows.append(
+                    WatchTableRow(
+                        timestamp_utc=_utc_now_iso(),
+                        preset=preset.name,
+                        source_search_url=candidate.source_search_url,
+                        listing_url=listing_url,
+                        seen_key=seen_key,
+                        marketplace="",
+                        status="skipped_unknown_marketplace",
+                        reason="marketplace detection failed",
+                    )
+                )
                 continue
 
             result.checked += 1
@@ -175,6 +305,25 @@ async def run_market_watch(
                     logger.info(
                         "Skip listing due to missing critical fields (price/mileage): %s",
                         listing_url,
+                    )
+                    table_rows.append(
+                        WatchTableRow(
+                            timestamp_utc=_utc_now_iso(),
+                            preset=preset.name,
+                            source_search_url=candidate.source_search_url,
+                            listing_url=listing_url,
+                            seen_key=seen_key,
+                            marketplace=marketplace.value,
+                            status="skipped_incomplete",
+                            reason="missing critical fields (price/mileage)",
+                            brand=str(getattr(car, "brand", "") or ""),
+                            model=str(getattr(car, "model", "") or ""),
+                            year=str(getattr(car, "year", "") or ""),
+                            production_year_month=str(getattr(car, "production_year_month", "") or ""),
+                            mileage_km=str(getattr(car, "mileage_km", "") or ""),
+                            engine_cc=str(getattr(car, "engine_cc", "") or ""),
+                            fuel_type=str(getattr(car, "fuel_type", "") or ""),
+                        )
                     )
                     continue
 
@@ -204,6 +353,27 @@ async def run_market_watch(
                     final_price_usd=price_result.final_price_usd,
                     filters=preset.filters,
                 ):
+                    table_rows.append(
+                        WatchTableRow(
+                            timestamp_utc=_utc_now_iso(),
+                            preset=preset.name,
+                            source_search_url=candidate.source_search_url,
+                            listing_url=listing_url,
+                            seen_key=seen_key,
+                            marketplace=marketplace.value,
+                            status="filtered_out",
+                            reason="does not match preset filters",
+                            brand=car.brand,
+                            model=car.model,
+                            year=str(car.year),
+                            production_year_month=str(getattr(car, "production_year_month", "") or ""),
+                            mileage_km=str(car.mileage_km),
+                            engine_cc=str(car.engine_cc),
+                            fuel_type=car.fuel_type,
+                            price_korea_usd=f"{price_korea_usd:.2f}",
+                            final_price_usd=f"{price_result.final_price_usd:.2f}",
+                        )
+                    )
                     continue
 
                 result.matched += 1
@@ -219,44 +389,107 @@ async def run_market_watch(
                     is_approximate=marketplace.value == "generic",
                 )
 
-                await _send_result(bot, channel_id, text, car.photos, reply_markup=manager_keyboard)
+                sent_message = await _send_result(bot, channel_id, text, car.photos, reply_markup=manager_keyboard)
+                telegram_post_url = _build_telegram_post_url(channel_id, sent_message.message_id)
                 # Save stable dedupe key + original URL (backward compatibility)
                 seen_urls.add(seen_key)
                 seen_urls.add(listing_url)
+                table_rows.append(
+                    WatchTableRow(
+                        timestamp_utc=_utc_now_iso(),
+                        preset=preset.name,
+                        source_search_url=candidate.source_search_url,
+                        listing_url=listing_url,
+                        seen_key=seen_key,
+                        marketplace=marketplace.value,
+                        status="posted",
+                        reason="matched and published",
+                        telegram_post_url=telegram_post_url,
+                        brand=car.brand,
+                        model=car.model,
+                        year=str(car.year),
+                        production_year_month=str(getattr(car, "production_year_month", "") or ""),
+                        mileage_km=str(car.mileage_km),
+                        engine_cc=str(car.engine_cc),
+                        fuel_type=car.fuel_type,
+                        price_korea_usd=f"{price_korea_usd:.2f}",
+                        final_price_usd=f"{price_result.final_price_usd:.2f}",
+                    )
+                )
                 posted_for_preset += 1
                 result.posted += 1
                 await asyncio.sleep(2)
             except ValueError as exc:
                 if "Missing required fields" in str(exc):
                     logger.info("Skip listing with incomplete data: %s", listing_url)
+                    table_rows.append(
+                        WatchTableRow(
+                            timestamp_utc=_utc_now_iso(),
+                            preset=preset.name,
+                            source_search_url=candidate.source_search_url,
+                            listing_url=listing_url,
+                            seen_key=seen_key,
+                            marketplace=marketplace.value,
+                            status="skipped_incomplete",
+                            reason=str(exc),
+                        )
+                    )
                 else:
                     logger.warning("Failed to process listing: %s (%s)", listing_url, exc)
+                    table_rows.append(
+                        WatchTableRow(
+                            timestamp_utc=_utc_now_iso(),
+                            preset=preset.name,
+                            source_search_url=candidate.source_search_url,
+                            listing_url=listing_url,
+                            seen_key=seen_key,
+                            marketplace=marketplace.value,
+                            status="failed",
+                            reason=str(exc),
+                        )
+                    )
             except Exception as exc:
                 logger.warning("Failed to process listing: %s (%s)", listing_url, exc)
+                table_rows.append(
+                    WatchTableRow(
+                        timestamp_utc=_utc_now_iso(),
+                        preset=preset.name,
+                        source_search_url=candidate.source_search_url,
+                        listing_url=listing_url,
+                        seen_key=seen_key,
+                        marketplace=marketplace.value,
+                        status="failed",
+                        reason=str(exc),
+                    )
+                )
+
+    if table_rows:
+        save_watch_results_table(results_path, table_rows)
+        logger.info("Saved %d scan rows to %s", len(table_rows), results_path)
 
     return result
 
 
-async def _collect_candidate_listing_urls(search_urls: list[str], max_candidates_per_url: int) -> list[str]:
+async def _collect_candidate_listing_urls(search_urls: list[str], max_candidates_per_url: int) -> list[CandidateListing]:
     # Collect per-source URL lists first, then mix them in round-robin order.
     # This prevents one marketplace (e.g., Encar) from starving others (KB/KCar)
     # when runs are time-limited.
-    per_source_urls: list[list[str]] = []
+    per_source_urls: list[list[CandidateListing]] = []
     global_seen: set[str] = set()
 
     for search_url in search_urls:
         urls = await _extract_listing_urls_from_page(search_url, max_count=max_candidates_per_url)
-        filtered: list[str] = []
+        filtered: list[CandidateListing] = []
         for url in urls:
             if url in global_seen:
                 continue
             global_seen.add(url)
-            filtered.append(url)
+            filtered.append(CandidateListing(listing_url=url, source_search_url=search_url))
             if len(filtered) >= max_candidates_per_url:
                 break
         per_source_urls.append(filtered)
 
-    candidates: list[str] = []
+    candidates: list[CandidateListing] = []
     global_limit = max_candidates_per_url * max(1, len(search_urls))
     index = 0
 

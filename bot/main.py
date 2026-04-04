@@ -71,10 +71,10 @@ async def _send_result(
     text: str,
     photos: list[str],
     reply_markup: InlineKeyboardMarkup | None = None,
-) -> None:
+) -> Message:
     if not photos:
-        await _api_call_with_retry(lambda: bot.send_message(chat_id, text, reply_markup=reply_markup))
-        return
+        sent_message = await _api_call_with_retry(lambda: bot.send_message(chat_id, text, reply_markup=reply_markup))
+        return sent_message
 
     try:
         media = [InputMediaPhoto(media=photo) for photo in photos[:10]]
@@ -83,7 +83,8 @@ async def _send_result(
         logger.warning("Failed to send photo album", extra={"chat_id": chat_id}, exc_info=True)
 
     await asyncio.sleep(1)  # small gap between album and caption message
-    await _api_call_with_retry(lambda: bot.send_message(chat_id, text, reply_markup=reply_markup))
+    sent_message = await _api_call_with_retry(lambda: bot.send_message(chat_id, text, reply_markup=reply_markup))
+    return sent_message
 
 
 def register_handlers(
