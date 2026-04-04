@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+
+from bs4 import BeautifulSoup
 
 from parsers.common import normalize_display_text, parse_car_from_html
 from utils.helpers import CarInfo, fetch_page_html
 
 logger = logging.getLogger(__name__)
+
+
+def _to_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value)
+    digits = re.sub(r"[^0-9]", "", text)
+    return int(digits) if digits else None
 
 
 def _extract_json_object(text: str, start_index: int) -> str | None:
@@ -93,6 +106,47 @@ def _merge_model_parts(model_base: str, grade: str) -> str:
     return " ".join(merged)
 
 
+def _extract_fallback_fields(html: str) -> tuple[int | None, int | None, int | None, int | None]:
+    soup = BeautifulSoup(html, "html.parser")
+
+    text_parts: list[str] = []
+    for meta_name in ["description", "og:description", "og:title"]:
+        node = soup.select_one(f"meta[name='{meta_name}'], meta[property='{meta_name}']")
+        if node and node.get("content"):
+            text_parts.append(str(node.get("content")))
+    text_parts.append(" ".join(soup.stripped_strings))
+    text = " ".join(text_parts)
+
+    year: int | None = None
+    production_year_month: int | None = None
+
+    ym_match = re.search(r"\b(19\d{2}|20\d{2})\s*[년/.-]\s*(0?[1-9]|1[0-2])(?:\s*월|\s*식)?", text)
+    if ym_match:
+        year = int(ym_match.group(1))
+        month = int(ym_match.group(2))
+        production_year_month = year * 100 + month
+    else:
+        short_match = re.search(r"\b(\d{2})\s*/\s*(0?[1-9]|1[0-2])\s*식", text)
+        if short_match:
+            year = 2000 + int(short_match.group(1))
+            month = int(short_match.group(2))
+            production_year_month = year * 100 + month
+
+    mileage_km: int | None = None
+    mileage_match = re.search(r"([\d,\.]+)\s*km", text, flags=re.IGNORECASE)
+    if mileage_match:
+        mileage_km = _to_int(mileage_match.group(1))
+
+    price_won: int | None = None
+    manwon_match = re.search(r"([\d,\.]+)\s*만원", text)
+    if manwon_match:
+        manwon = _to_int(manwon_match.group(1))
+        if manwon is not None:
+            price_won = manwon * 10_000
+
+    return year, production_year_month, mileage_km, price_won
+
+
 def _parse_from_preloaded_state(html: str, url: str) -> CarInfo | None:
     marker = "__PRELOADED_STATE__"
     marker_index = html.find(marker)
@@ -118,12 +172,24 @@ def _parse_from_preloaded_state(html: str, url: str) -> CarInfo | None:
     if year is None and form_year.isdigit():
         year = int(form_year)
 
-    mileage = int(spec.get("mileage") or 0)
-    engine_cc = int(spec.get("displacement") or 0)
+    mileage = _to_int(spec.get("mileage"))
+    engine_cc = _to_int(spec.get("displacement"))
     fuel_type = _fuel_to_ru(spec.get("fuelName"))
 
-    price_manwon = advert.get("price")
-    price_won = int(price_manwon) * 10_000 if price_manwon is not None else 0
+    price_manwon = _to_int(advert.get("price"))
+    price_won = price_manwon * 10_000 if price_manwon is not None else None
+
+    fb_year, fb_year_month, fb_mileage, fb_price_won = _extract_fallback_fields(html)
+    if year is None:
+        year = fb_year
+    if production_year_month is None:
+        production_year_month = fb_year_month
+    if mileage is None:
+        mileage = fb_mileage
+    if price_won is None:
+        price_won = fb_price_won
+    if engine_cc is None:
+        engine_cc = 1600
 
     brand = (
         category.get("manufacturerEnglishName")
@@ -154,7 +220,7 @@ def _parse_from_preloaded_state(html: str, url: str) -> CarInfo | None:
             continue
         photos.append(f"https://ci.encar.com{path}")
 
-    if not all([year, mileage, engine_cc, price_won]):
+    if year is None or mileage is None or price_won is None:
         return None
 
     return CarInfo(
