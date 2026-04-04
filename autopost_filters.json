@@ -23,6 +23,7 @@
         "Range Rover"
       ],
       "year_month_min": 202511,
+      "mileage_max": 10000,
       "price_usd_min": 68000
     }
   }

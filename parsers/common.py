@@ -178,6 +178,20 @@ def _extract_engine_cc(text: str) -> int | None:
 
 def _extract_fuel_type(text: str) -> str | None:
     lower = text.lower()
+
+    # Priority rules for mixed/combined fuel labels.
+    # Examples: "하이브리드(가솔린)", "gasoline+electric", "Бензин + Электр"
+    if any(token in lower for token in ["하이브리드", "hybrid", "гибрид"]):
+        return "Гибрид"
+    if ("전기" in lower or "electric" in lower or "электр" in lower) and (
+        "가솔린" in lower
+        or "휘발유" in lower
+        or "gasoline" in lower
+        or "petrol" in lower
+        or "бензин" in lower
+    ):
+        return "Гибрид"
+
     for key, value in FUEL_MAP.items():
         if key in lower:
             return value

@@ -84,6 +84,17 @@ def _fuel_to_ru(fuel_name: str | None) -> str:
         return "Не указано"
 
     key = fuel_name.strip().lower()
+    if any(token in key for token in ["하이브리드", "hybrid", "гибрид"]):
+        return "Гибрид"
+    if ("전기" in key or "electric" in key or "электр" in key) and (
+        "가솔린" in key
+        or "휘발유" in key
+        or "gasoline" in key
+        or "petrol" in key
+        or "бензин" in key
+    ):
+        return "Гибрид"
+
     mapping = {
         "가솔린": "Бензин",
         "휘발유": "Бензин",

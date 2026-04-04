@@ -98,6 +98,29 @@ def _extract_json_ld_product(soup: BeautifulSoup) -> dict | None:
     return None
 
 
+def _extract_engine_cc_fallback(soup: BeautifulSoup) -> int | None:
+    # Fallback for pages where displacement is not present in the expected table th/td.
+    text = " ".join(soup.stripped_strings)
+    script_text = " ".join((script.get_text(" ", strip=True) or "") for script in soup.find_all("script"))
+    searchable = f"{text} {script_text}"
+
+    patterns = [
+        r"배기량\s*[:：]?\s*([\d,]{3,7})\s*(?:cc|CC)?",
+        r"([\d,]{3,7})\s*cc",
+        r'"displacement"\s*[:=]\s*"?([\d,]{3,7})"?',
+        r'"engineDisplacement"\s*[:=]\s*"?([\d,]{3,7})"?',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, searchable, flags=re.IGNORECASE)
+        if not match:
+            continue
+        value = _parse_int(match.group(1))
+        if value:
+            return value
+
+    return None
+
+
 def _extract_brand_model(product_name: str) -> tuple[str, str]:
     raw = product_name.strip()
     raw = re.sub(r"([A-Za-z0-9]+)-클래스", r"\1-Class", raw)
@@ -148,6 +171,8 @@ def _parse_kb_html(html: str, url: str) -> CarInfo:
     year, production_year_month = _extract_year_and_month_from_text(year_text)
     mileage_km = _parse_int(mileage_text)
     engine_cc = _parse_int(engine_text)
+    if engine_cc is None:
+        engine_cc = _extract_engine_cc_fallback(soup)
     fuel_type = _extract_fuel_type(fuel_text) or "Не указано"
 
     photos: list[str] = []
