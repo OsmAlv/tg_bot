@@ -255,7 +255,13 @@ async def _extract_listing_urls_from_page(url: str, max_count: int = 120) -> lis
     if marketplace is not None and _looks_like_listing_url(url):
         return [url]
 
+    disable_playwright = os.getenv("AUTO_SCAN_DISABLE_PLAYWRIGHT", "1").strip().lower() in {"1", "true", "yes"}
+
     lower_url = url.lower()
+    if "encar.com/fc/fc_carsearchlist.do" in lower_url and disable_playwright:
+        logger.info("Skip Encar search extraction in static-only mode (requires Playwright): %s", url)
+        return []
+
     if "kbchachacha.com/public/search/main.kbc" in lower_url:
         # Extract hash-fragment params, e.g. #!?page=1&regiDay=2025 → {regiDay: 2025}
         fragment = urlparse(url).fragment  # e.g. "!?page=1&regiDay=2025"
@@ -306,7 +312,6 @@ async def _extract_listing_urls_from_page(url: str, max_count: int = 120) -> lis
 
     # Search pages are often JS-rendered; if static HTML gives too few links, retry with Playwright.
     is_search_like = any(token in url.lower() for token in ("search", "carsearchlist", "main.kbc", "#!"))
-    disable_playwright = os.getenv("AUTO_SCAN_DISABLE_PLAYWRIGHT", "1").strip().lower() in {"1", "true", "yes"}
     if is_search_like and len(deduped) < 5 and not disable_playwright:
         try:
             rendered_html = await fetch_page_html(url, use_playwright=True)
@@ -379,17 +384,8 @@ def _extract_listing_urls_from_html(html: str, base_url: str) -> list[str]:
 
 
 def _normalize_listing_url(url: str) -> str:
-    lower = url.lower()
-
-    # Canonicalize Encar links to stable cardetail URL by carid.
-    # This removes volatile tracking params that can break parsing.
-    if "encar.com" in lower:
-        import re
-
-        match = re.search(r"[?&]carid=(\d+)", url, flags=re.IGNORECASE)
-        if match:
-            return f"https://www.encar.com/dc/dc_cardetailview.do?carid={match.group(1)}"
-
+    # Keep original listing URL intact. Some marketplaces rely on additional
+    # query params/context and may not work with canonicalized links.
     return url
 
 
