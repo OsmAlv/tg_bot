@@ -362,6 +362,7 @@ def _extract_listing_urls_from_html(html: str, base_url: str) -> list[str]:
     seen: set[str] = set()
     for item in raw_urls:
         clean = item.split("#", 1)[0]
+        clean = _normalize_listing_url(clean)
         if not _looks_like_listing_url(clean):
             continue
         if clean in seen:
@@ -370,6 +371,21 @@ def _extract_listing_urls_from_html(html: str, base_url: str) -> list[str]:
         deduped.append(clean)
 
     return deduped
+
+
+def _normalize_listing_url(url: str) -> str:
+    lower = url.lower()
+
+    # Canonicalize Encar links to stable cardetail URL by carid.
+    # This removes volatile tracking params that can break parsing.
+    if "encar.com" in lower:
+        import re
+
+        match = re.search(r"[?&]carid=(\d+)", url, flags=re.IGNORECASE)
+        if match:
+            return f"https://www.encar.com/dc/dc_cardetailview.do?carid={match.group(1)}"
+
+    return url
 
 
 def _looks_like_listing_url(url: str) -> bool:
