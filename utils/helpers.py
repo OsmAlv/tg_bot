@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 
 import requests
 from dotenv import load_dotenv
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -138,7 +144,36 @@ async def _fetch_with_playwright(url: str, timeout_seconds: int = 30) -> str:
             await browser.close()
             return html
     except Exception as exc:
+        error_text = str(exc)
+        if "Executable doesn't exist" in error_text:
+            await _install_playwright_browser_runtime()
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                context = await browser.new_context()
+                page = await context.new_page()
+                await page.goto(url, wait_until="networkidle", timeout=timeout_seconds * 1000)
+                await asyncio.sleep(2)
+                html = await page.content()
+                await context.close()
+                await browser.close()
+                return html
         raise ValueError("Playwright rendering failed") from exc
+
+
+async def _install_playwright_browser_runtime() -> None:
+    browser_path = os.getenv("PLAYWRIGHT_BROWSERS_PATH", "/app/.playwright")
+    logger.warning("Playwright browser binary missing, installing Chromium to %s", browser_path)
+
+    def _install() -> None:
+        env = os.environ.copy()
+        env["PLAYWRIGHT_BROWSERS_PATH"] = browser_path
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+            env=env,
+        )
+
+    await asyncio.to_thread(_install)
 
 
 async def fetch_page_html(url: str, use_playwright: bool = False, timeout_seconds: int = 20) -> str:
