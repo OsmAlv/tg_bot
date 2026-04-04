@@ -4,10 +4,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlencode, urlparse
+from urllib.parse import parse_qs, urljoin, urlencode, urlparse
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -155,7 +156,8 @@ async def run_market_watch(
         )
 
         for listing_url in candidate_urls:
-            if listing_url in seen_urls:
+            seen_key = _listing_seen_key(listing_url)
+            if listing_url in seen_urls or seen_key in seen_urls:
                 continue
             if posted_for_preset >= preset.max_posts_per_run:
                 break
@@ -217,6 +219,8 @@ async def run_market_watch(
                 )
 
                 await _send_result(bot, channel_id, text, car.photos, reply_markup=manager_keyboard)
+                # Save stable dedupe key + original URL (backward compatibility)
+                seen_urls.add(seen_key)
                 seen_urls.add(listing_url)
                 posted_for_preset += 1
                 result.posted += 1
@@ -408,6 +412,37 @@ def _normalize_listing_url(url: str) -> str:
     # Keep original listing URL intact. Some marketplaces rely on additional
     # query params/context and may not work with canonicalized links.
     return url
+
+
+def _listing_seen_key(url: str) -> str:
+    parsed = urlparse(url)
+    lower = url.lower()
+
+    if "encar.com" in lower:
+        query = parse_qs(parsed.query)
+        carid = (query.get("carid") or [None])[0]
+        if carid and str(carid).isdigit():
+            return f"encar:{carid}"
+        match = re.search(r"/cars/detail/(\d+)", parsed.path)
+        if match:
+            return f"encar:{match.group(1)}"
+
+    if "kbchachacha.com" in lower:
+        query = parse_qs(parsed.query)
+        car_seq = (query.get("carSeq") or [None])[0]
+        if car_seq and str(car_seq).isdigit():
+            return f"kb:{car_seq}"
+        match = re.search(r"/public/car/detail[^\d]*(\d+)", parsed.path)
+        if match:
+            return f"kb:{match.group(1)}"
+
+    if "kcar.com" in lower:
+        match = re.search(r"/bc/detail/car/(\d+)", parsed.path)
+        if match:
+            return f"kcar:{match.group(1)}"
+
+    # Fallback for unknown patterns
+    return url.split("#", 1)[0]
 
 
 def _looks_like_listing_url(url: str) -> bool:

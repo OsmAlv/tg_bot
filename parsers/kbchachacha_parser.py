@@ -173,7 +173,7 @@ def _parse_kb_html(html: str, url: str) -> CarInfo:
     engine_cc = _parse_int(engine_text)
     if engine_cc is None:
         engine_cc = _extract_engine_cc_fallback(soup)
-    fuel_type = _extract_fuel_type(fuel_text) or "Не указано"
+    fuel_type = _extract_fuel_type(f"{name} {fuel_text}") or "Не указано"
 
     photos: list[str] = []
     images = product.get("image")
@@ -229,11 +229,26 @@ def _parse_from_kb_list_empty(html: str, url: str) -> CarInfo:
     brand, model = _extract_brand_model(title)
 
     info_spans = card.select("div.data-line span")
-    year_text = info_spans[0].get_text(" ", strip=True) if len(info_spans) >= 1 else ""
-    mileage_text = info_spans[1].get_text(" ", strip=True) if len(info_spans) >= 2 else ""
+    info_texts = [span.get_text(" ", strip=True) for span in info_spans]
+    year_text = info_texts[0] if len(info_texts) >= 1 else ""
+    mileage_text = info_texts[1] if len(info_texts) >= 2 else ""
 
     year, production_year_month = _extract_year_and_month_from_text(year_text)
     mileage_km = _parse_int(mileage_text)
+
+    # Try to recover displacement/fuel from all visible row texts.
+    all_text = " ".join([title] + info_texts)
+    engine_cc = None
+    for pattern in [r"([\d,]{3,7})\s*cc", r"배기량\s*[:：]?\s*([\d,]{3,7})"]:
+        m = re.search(pattern, all_text, flags=re.IGNORECASE)
+        if m:
+            engine_cc = _parse_int(m.group(1))
+            if engine_cc:
+                break
+    if engine_cc is None:
+        engine_cc = 1600
+
+    fuel_type = _extract_fuel_type(all_text) or "Не указано"
 
     price_text = ""
     price_node = card.select_one("span.price") or card.select_one("strong.pay")
@@ -266,8 +281,8 @@ def _parse_from_kb_list_empty(html: str, url: str) -> CarInfo:
         model=model,
         year=int(year),
         mileage_km=int(mileage_km),
-        engine_cc=1600,
-        fuel_type="Не указано",
+        engine_cc=int(engine_cc),
+        fuel_type=fuel_type,
         price_won=int(price_won),
         photos=photos,
         source_url=url,
@@ -280,20 +295,26 @@ async def parse_kbchachacha_listing(url: str) -> CarInfo:
     try:
         return _parse_kb_html(html, url)
     except Exception:
-        # Strict static fallback (no guessed defaults)
+        # 1) Try rendered detail page (often contains full spec table)
         try:
-            return parse_car_from_html(html, url, strict=True)
+            rendered_html = await fetch_page_html(url, use_playwright=True)
+            return _parse_kb_html(rendered_html, url)
         except Exception:
-            # Parse from list endpoint card block by carSeq.
-            # Prefer the cached HTML (populated during URL extraction) to avoid
-            # a second fetch that might return different/paginated results.
+            pass
+
+        # 2) Parse from list endpoint card block by carSeq.
+        # Prefer cached list.empty HTML (populated during URL extraction).
+        try:
+            list_html = _KB_LIST_HTML_CACHE
+            if list_html is None:
+                list_html = await fetch_page_html(
+                    "https://www.kbchachacha.com/public/search/list.empty",
+                    use_playwright=False,
+                )
+            return _parse_from_kb_list_empty(list_html, url)
+        except Exception:
+            # 3) Last-resort strict static generic parser
             try:
-                list_html = _KB_LIST_HTML_CACHE
-                if list_html is None:
-                    list_html = await fetch_page_html(
-                        "https://www.kbchachacha.com/public/search/list.empty",
-                        use_playwright=False,
-                    )
-                return _parse_from_kb_list_empty(list_html, url)
+                return parse_car_from_html(html, url, strict=True)
             except Exception as exc:
                 raise ValueError("KB: unable to parse listing from static sources") from exc
