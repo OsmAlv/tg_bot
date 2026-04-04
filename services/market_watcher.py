@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlencode, urlparse
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 
 from bot.main import _send_result, build_car_message
 from parsers import detect_marketplace, parse_listing
+from parsers.kbchachacha_parser import prime_kb_list_cache
 from services.currency_service import CurrencyService
 from services.price_calculator import PriceCalculator
 from utils.helpers import fetch_page_html
@@ -175,6 +176,16 @@ async def run_market_watch(
                     continue
 
                 price_korea_usd = await currency_service.source_to_usd(car.price_won, car.price_currency)
+                logger.info(
+                    "Parsed: %s %s | year=%s ym=%s | %.0f km | $%.0f | %s",
+                    car.brand,
+                    car.model,
+                    car.year,
+                    getattr(car, "production_year_month", None),
+                    car.mileage_km,
+                    price_korea_usd,
+                    listing_url,
+                )
                 usd_uzs = await currency_service.usd_to_uzs_rate()
                 price_result = price_calculator.calculate(
                     car_price_usd=price_korea_usd,
@@ -221,7 +232,7 @@ async def _collect_candidate_listing_urls(search_urls: list[str], max_candidates
     seen: set[str] = set()
 
     for search_url in search_urls:
-        urls = await _extract_listing_urls_from_page(search_url)
+        urls = await _extract_listing_urls_from_page(search_url, max_count=max_candidates_per_url)
         for url in urls:
             if url in seen:
                 continue
@@ -233,7 +244,7 @@ async def _collect_candidate_listing_urls(search_urls: list[str], max_candidates
     return candidates
 
 
-async def _extract_listing_urls_from_page(url: str) -> list[str]:
+async def _extract_listing_urls_from_page(url: str, max_count: int = 120) -> list[str]:
     # Allow direct listing URLs in presets
     marketplace = detect_marketplace(url)
     if marketplace is not None and _looks_like_listing_url(url):
@@ -241,14 +252,49 @@ async def _extract_listing_urls_from_page(url: str) -> list[str]:
 
     lower_url = url.lower()
     if "kbchachacha.com/public/search/main.kbc" in lower_url:
-        kb_list_url = "https://www.kbchachacha.com/public/search/list.empty"
-        try:
-            html = await fetch_page_html(kb_list_url, use_playwright=False)
-            deduped = _extract_listing_urls_from_html(html, kb_list_url)
-            logger.info("Extracted %d candidate listing URLs from KB list endpoint", len(deduped))
-            return deduped
-        except Exception:
-            logger.warning("KB list endpoint extraction failed")
+        # Extract hash-fragment params, e.g. #!?page=1&regiDay=2025 → {regiDay: 2025}
+        fragment = urlparse(url).fragment  # e.g. "!?page=1&regiDay=2025"
+        base_kb_params: dict[str, str] = {}
+        if "?" in fragment:
+            for pair in fragment.split("?", 1)[1].split("&"):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    if k != "page":  # page is controlled by the pagination loop
+                        base_kb_params[k] = v
+
+        all_kb_urls: list[str] = []
+        all_kb_html_parts: list[str] = []
+        seen_kb: set[str] = set()
+
+        for page_num in range(1, 4):  # up to 3 pages (~120 listings)
+            page_params = {**base_kb_params, "page": str(page_num)}
+            kb_list_url = "https://www.kbchachacha.com/public/search/list.empty?" + urlencode(page_params)
+            try:
+                html = await fetch_page_html(kb_list_url, use_playwright=False)
+                page_urls = _extract_listing_urls_from_html(html, kb_list_url)
+                new_urls = [u for u in page_urls if u not in seen_kb]
+                if not new_urls:
+                    break  # No new listings on this page — stop paginating
+                for u in new_urls:
+                    seen_kb.add(u)
+                    all_kb_urls.append(u)
+                all_kb_html_parts.append(html)
+                if len(all_kb_urls) >= max_count:
+                    break
+            except Exception:
+                logger.warning("KB list.empty page %d fetch failed", page_num)
+                break
+
+        # Cache combined HTML for use during per-listing parse fallback
+        if all_kb_html_parts:
+            prime_kb_list_cache("\n".join(all_kb_html_parts))
+
+        logger.info(
+            "Extracted %d candidate listing URLs from KB list endpoint (%d page(s) fetched)",
+            len(all_kb_urls),
+            len(all_kb_html_parts),
+        )
+        return all_kb_urls
 
     html = await fetch_page_html(url, use_playwright=False)
     deduped = _extract_listing_urls_from_html(html, url)
@@ -366,9 +412,11 @@ def _matches_filters(car: Any, price_korea_usd: float, final_price_usd: float, f
             if production_year_month < filters.year_month_min:
                 return False
         else:
-            # If month is unknown, allow only when year is definitely above threshold year.
+            # If production month is unknown, only reject when the car year is strictly
+            # below the threshold year (e.g. threshold=202511 → threshold_year=2025,
+            # so a 2025 car without month info is allowed through; a 2024 car is not).
             threshold_year = filters.year_month_min // 100
-            if year <= threshold_year:
+            if year < threshold_year:
                 return False
 
     if filters.year_month_max is not None:

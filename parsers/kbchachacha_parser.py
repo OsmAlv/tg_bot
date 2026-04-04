@@ -9,6 +9,17 @@ from parsers.common import _extract_photos, _extract_fuel_type, normalize_displa
 from utils.helpers import CarInfo, fetch_page_html
 
 
+# Module-level cache: holds the most-recently fetched list.empty HTML so the
+# parse fallback can reuse it instead of re-fetching (which might return different results).
+_KB_LIST_HTML_CACHE: str | None = None
+
+
+def prime_kb_list_cache(html: str) -> None:
+    """Store list.empty HTML so parse_kbchachacha_listing can reuse it without re-fetching."""
+    global _KB_LIST_HTML_CACHE
+    _KB_LIST_HTML_CACHE = html
+
+
 BRAND_KO_TO_EN = {
     "벤츠": "Mercedes-Benz",
     "현대": "Hyundai",
@@ -248,9 +259,16 @@ async def parse_kbchachacha_listing(url: str) -> CarInfo:
         try:
             return parse_car_from_html(html, url, strict=True)
         except Exception:
-            # Parse from list endpoint card block by carSeq (works without Playwright)
+            # Parse from list endpoint card block by carSeq.
+            # Prefer the cached HTML (populated during URL extraction) to avoid
+            # a second fetch that might return different/paginated results.
             try:
-                list_html = await fetch_page_html("https://www.kbchachacha.com/public/search/list.empty", use_playwright=False)
+                list_html = _KB_LIST_HTML_CACHE
+                if list_html is None:
+                    list_html = await fetch_page_html(
+                        "https://www.kbchachacha.com/public/search/list.empty",
+                        use_playwright=False,
+                    )
                 return _parse_from_kb_list_empty(list_html, url)
             except Exception as exc:
                 raise ValueError("KB: unable to parse listing from static sources") from exc
