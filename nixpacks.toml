@@ -1,5 +1,36 @@
 [phases.setup]
-nixPkgs = ["python311"]
+nixPkgs = [
+  "python311",
+  "glib",
+  "nspr",
+  "nss",
+  "dbus",
+  "atk",
+  "at-spi2-atk",
+  "at-spi2-core",
+  "pango",
+  "cairo",
+  "alsa-lib",
+  "cups",
+  "libdrm",
+  "libxkbcommon",
+  "xorg.libX11",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+  "xorg.libxcb",
+  "xorg.libxshmfence",
+  "xorg.libXi",
+  "xorg.libXrender",
+  "xorg.libXtst",
+  "xorg.libxkbfile",
+  "xorg.libXcursor",
+  "xorg.libXinerama",
+  "xorg.libXScrnSaver",
+  "mesa"
+]
 
 [variables]
 PLAYWRIGHT_BROWSERS_PATH = "/app/.playwright"
@@ -8,7 +39,7 @@ PLAYWRIGHT_BROWSERS_PATH = "/app/.playwright"
 cmds = [
   "python -m pip install --upgrade pip",
   "pip install -r requirements.txt",
-  "PLAYWRIGHT_BROWSERS_PATH=/app/.playwright python -m playwright install chromium"
+  "PLAYWRIGHT_BROWSERS_PATH=/app/.playwright python -m playwright install --with-deps chromium"
 ]
 
 [start]
