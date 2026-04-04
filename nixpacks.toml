@@ -66,6 +66,7 @@ PLAYWRIGHT_BROWSERS_PATH = "/app/.playwright"
 cmds = [
   "python -m pip install --upgrade pip",
   "pip install -r requirements.txt",
+  "python -m playwright install-deps chromium",
   "PLAYWRIGHT_BROWSERS_PATH=/app/.playwright python -m playwright install --with-deps chromium"
 ]
 
