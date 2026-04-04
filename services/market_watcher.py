@@ -221,6 +221,11 @@ async def run_market_watch(
                 posted_for_preset += 1
                 result.posted += 1
                 await asyncio.sleep(2)
+            except ValueError as exc:
+                if "Missing required fields" in str(exc):
+                    logger.info("Skip listing with incomplete data: %s", listing_url)
+                else:
+                    logger.warning("Failed to process listing: %s (%s)", listing_url, exc)
             except Exception as exc:
                 logger.warning("Failed to process listing: %s (%s)", listing_url, exc)
 
