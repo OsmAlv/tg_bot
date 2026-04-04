@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from urllib.parse import parse_qs, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -10,6 +11,27 @@ from parsers.common import normalize_display_text, parse_car_from_html
 from utils.helpers import CarInfo, fetch_page_html
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_carid(url: str) -> str | None:
+    parsed = urlparse(url)
+    query_carid = parse_qs(parsed.query).get("carid", [None])[0]
+    if query_carid and str(query_carid).isdigit():
+        return str(query_carid)
+
+    path_match = re.search(r"/cars/detail/(\d+)", parsed.path)
+    if path_match:
+        return path_match.group(1)
+
+    raw_match = re.search(r"carid=(\d+)", url)
+    if raw_match:
+        return raw_match.group(1)
+
+    return None
+
+
+def _build_fem_detail_url(carid: str) -> str:
+    return f"https://fem.encar.com/cars/detail/{carid}"
 
 
 def _to_int(value: object) -> int | None:
@@ -238,17 +260,40 @@ def _parse_from_preloaded_state(html: str, url: str) -> CarInfo | None:
 
 
 async def parse_encar_listing(url: str) -> CarInfo:
-    html = await fetch_page_html(url, use_playwright=False)
+    carid = _extract_carid(url)
+    candidate_urls: list[str] = [url]
+    if carid:
+        fem_url = _build_fem_detail_url(carid)
+        if fem_url not in candidate_urls:
+            candidate_urls.append(fem_url)
 
-    data = _parse_from_preloaded_state(html, url)
-    if data:
-        return data
+    last_error: Exception | None = None
+    for candidate in candidate_urls:
+        try:
+            html = await fetch_page_html(candidate, use_playwright=False)
+            data = _parse_from_preloaded_state(html, candidate)
+            if data:
+                data.source_url = url
+                return data
+            parsed = parse_car_from_html(html, candidate)
+            parsed.source_url = url
+            return parsed
+        except Exception as exc:
+            last_error = exc
 
-    try:
-        return parse_car_from_html(html, url)
-    except ValueError:
-        rendered_html = await fetch_page_html(url, use_playwright=True)
-        data = _parse_from_preloaded_state(rendered_html, url)
-        if data:
-            return data
-        return parse_car_from_html(rendered_html, url)
+    for candidate in candidate_urls:
+        try:
+            html = await fetch_page_html(candidate, use_playwright=True)
+            data = _parse_from_preloaded_state(html, candidate)
+            if data:
+                data.source_url = url
+                return data
+            parsed = parse_car_from_html(html, candidate)
+            parsed.source_url = url
+            return parsed
+        except Exception as exc:
+            last_error = exc
+
+    if isinstance(last_error, Exception):
+        raise last_error
+    raise ValueError("Unable to parse Encar listing")
