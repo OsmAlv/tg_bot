@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import json
 import logging
 import os
@@ -396,7 +397,7 @@ def _extract_listing_urls_from_html(html: str, base_url: str) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
     for item in raw_urls:
-        clean = item.split("#", 1)[0]
+        clean = html_lib.unescape(item).split("#", 1)[0]
         clean = _normalize_listing_url(clean)
         if not _looks_like_listing_url(clean):
             continue
@@ -415,14 +416,18 @@ def _normalize_listing_url(url: str) -> str:
 
 
 def _listing_seen_key(url: str) -> str:
-    parsed = urlparse(url)
-    lower = url.lower()
+    normalized_url = html_lib.unescape(url)
+    parsed = urlparse(normalized_url)
+    lower = normalized_url.lower()
 
     if "encar.com" in lower:
         query = parse_qs(parsed.query)
         carid = (query.get("carid") or [None])[0]
         if carid and str(carid).isdigit():
             return f"encar:{carid}"
+        match = re.search(r"(?:[?&])carid=(\d+)", normalized_url)
+        if match:
+            return f"encar:{match.group(1)}"
         match = re.search(r"/cars/detail/(\d+)", parsed.path)
         if match:
             return f"encar:{match.group(1)}"
@@ -432,6 +437,9 @@ def _listing_seen_key(url: str) -> str:
         car_seq = (query.get("carSeq") or [None])[0]
         if car_seq and str(car_seq).isdigit():
             return f"kb:{car_seq}"
+        match = re.search(r"(?:[?&])carSeq=(\d+)", normalized_url)
+        if match:
+            return f"kb:{match.group(1)}"
         match = re.search(r"/public/car/detail[^\d]*(\d+)", parsed.path)
         if match:
             return f"kb:{match.group(1)}"
@@ -442,7 +450,7 @@ def _listing_seen_key(url: str) -> str:
             return f"kcar:{match.group(1)}"
 
     # Fallback for unknown patterns
-    return url.split("#", 1)[0]
+    return normalized_url.split("#", 1)[0]
 
 
 def _looks_like_listing_url(url: str) -> bool:
