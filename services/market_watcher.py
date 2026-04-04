@@ -233,18 +233,39 @@ async def run_market_watch(
 
 
 async def _collect_candidate_listing_urls(search_urls: list[str], max_candidates_per_url: int) -> list[str]:
-    candidates: list[str] = []
-    seen: set[str] = set()
+    # Collect per-source URL lists first, then mix them in round-robin order.
+    # This prevents one marketplace (e.g., Encar) from starving others (KB/KCar)
+    # when runs are time-limited.
+    per_source_urls: list[list[str]] = []
+    global_seen: set[str] = set()
 
     for search_url in search_urls:
         urls = await _extract_listing_urls_from_page(search_url, max_count=max_candidates_per_url)
+        filtered: list[str] = []
         for url in urls:
-            if url in seen:
+            if url in global_seen:
                 continue
-            seen.add(url)
-            candidates.append(url)
-            if len(candidates) >= max_candidates_per_url * max(1, len(search_urls)):
-                return candidates
+            global_seen.add(url)
+            filtered.append(url)
+            if len(filtered) >= max_candidates_per_url:
+                break
+        per_source_urls.append(filtered)
+
+    candidates: list[str] = []
+    global_limit = max_candidates_per_url * max(1, len(search_urls))
+    index = 0
+
+    while len(candidates) < global_limit:
+        progressed = False
+        for source_urls in per_source_urls:
+            if index < len(source_urls):
+                candidates.append(source_urls[index])
+                progressed = True
+                if len(candidates) >= global_limit:
+                    break
+        if not progressed:
+            break
+        index += 1
 
     return candidates
 
