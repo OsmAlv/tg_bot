@@ -284,6 +284,12 @@ def register_handlers(
 
             try:
                 car = await parse_listing(url, marketplace)
+                if car.price_won <= 0 or car.mileage_km <= 0:
+                    await message.answer(
+                        f"Ссылка {index}: не удалось получить корректные цену или пробег. Отправьте ссылку на карточку авто."
+                    )
+                    continue
+
                 price_korea_usd = await currency_service.source_to_usd(
                     car.price_won,
                     car.price_currency,

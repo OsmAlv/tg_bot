@@ -119,6 +119,23 @@ def _extract_year(text: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _extract_year_month(text: str) -> int | None:
+    # Examples: 2025-11, 2025/11, 2025.11, 2025년11월, 25년11월
+    match = re.search(r"(19\d{2}|20\d{2})\s*[-./년]\s*(0?[1-9]|1[0-2])(?:\s*월)?", text)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        return year * 100 + month
+
+    match = re.search(r"\b(\d{2})년\s*(0?[1-9]|1[0-2])월", text)
+    if match:
+        year = int(match.group(1)) + 2000
+        month = int(match.group(2))
+        return year * 100 + month
+
+    return None
+
+
 def _extract_mileage(text: str) -> int | None:
     patterns = [
         r"([\d\s,\.]+)\s*(?:km|KM|км|킬로|주행)",
@@ -283,6 +300,7 @@ def parse_car_from_html(html: str, url: str, strict: bool = True) -> CarInfo:
     brand, model = _extract_brand_model(title)
 
     year = _extract_year(searchable_text)
+    production_year_month = _extract_year_month(searchable_text)
     mileage_km = _extract_mileage(searchable_text)
     engine_cc = _extract_engine_cc(searchable_text)
     fuel_type = _extract_fuel_type(searchable_text)
@@ -329,6 +347,7 @@ def parse_car_from_html(html: str, url: str, strict: bool = True) -> CarInfo:
         price_currency=price_currency,
         photos=photos,
         source_url=url,
+        production_year_month=production_year_month,
     )
 
 

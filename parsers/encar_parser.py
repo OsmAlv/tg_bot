@@ -114,6 +114,7 @@ def _parse_from_preloaded_state(html: str, url: str) -> CarInfo | None:
     year_month = str(category.get("yearMonth") or "")
     form_year = str(category.get("formYear") or "")
     year = int(year_month[:4]) if len(year_month) >= 4 and year_month[:4].isdigit() else None
+    production_year_month = int(year_month[:6]) if len(year_month) >= 6 and year_month[:6].isdigit() else None
     if year is None and form_year.isdigit():
         year = int(form_year)
 
@@ -166,6 +167,7 @@ def _parse_from_preloaded_state(html: str, url: str) -> CarInfo | None:
         price_won=int(price_won),
         photos=list(dict.fromkeys(photos))[:10],
         source_url=url,
+        production_year_month=production_year_month,
     )
 
 

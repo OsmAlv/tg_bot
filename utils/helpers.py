@@ -32,6 +32,7 @@ class CarInfo:
     photos: list[str]
     source_url: str
     price_currency: str = "KRW"
+    production_year_month: int | None = None
 
 
 def load_settings() -> Settings:

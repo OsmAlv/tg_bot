@@ -1,0 +1,30 @@
+[
+  {
+    "name": "luxury_all_markets",
+    "search_urls": [
+      "https://www.encar.com/dc/dc_carsearchlist.do",
+      "https://www.kbchachacha.com/public/search/main.kbc",
+      "https://www.kcar.com/"
+    ],
+    "max_candidates_per_url": 80,
+    "max_posts_per_run": 5,
+    "filters": {
+      "brand_contains": [
+        "BMW",
+        "Mercedes",
+        "Mercedes-Benz",
+        "Porsche",
+        "Lamborghini",
+        "Ferrari",
+        "Bentley",
+        "Rolls-Royce",
+        "Aston Martin",
+        "Maserati",
+        "McLaren",
+        "Range Rover"
+      ],
+      "year_month_min": 202511,
+      "price_usd_min": 68000
+    }
+  }
+]

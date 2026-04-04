@@ -5,7 +5,7 @@ import re
 
 from bs4 import BeautifulSoup
 
-from parsers.common import _extract_photos, _extract_fuel_type, normalize_display_text, parse_with_fallback
+from parsers.common import _extract_photos, _extract_fuel_type, normalize_display_text, parse_car_from_html
 from utils.helpers import CarInfo, fetch_page_html
 
 
@@ -45,21 +45,31 @@ def _find_value_by_th(soup: BeautifulSoup, label: str) -> str | None:
     return td.get_text(" ", strip=True)
 
 
-def _extract_year_from_text(text: str) -> int | None:
+def _extract_year_and_month_from_text(text: str) -> tuple[int | None, int | None]:
+    # 25년11월(26년형) -> production_year_month=202511
+    month_match = re.search(r"(\d{2,4})년\s*(\d{1,2})월", text)
+    production_year_month: int | None = None
+    if month_match:
+        yy = int(month_match.group(1))
+        mm = int(month_match.group(2))
+        year_for_month = yy + 2000 if yy < 100 else yy
+        if 1 <= mm <= 12:
+            production_year_month = year_for_month * 100 + mm
+
     # 25년11월(26년형) -> 2026
     m = re.search(r"\((\d{2,4})년형\)", text)
     if m:
         year = int(m.group(1))
         if year < 100:
             year += 2000
-        return year
+        return year, production_year_month
 
     m = re.search(r"(19\d{2}|20\d{2})년형", text)
     if m:
-        return int(m.group(1))
+        return int(m.group(1)), production_year_month
 
     m = re.search(r"(19\d{2}|20\d{2})", text)
-    return int(m.group(1)) if m else None
+    return (int(m.group(1)) if m else None), production_year_month
 
 
 def _extract_json_ld_product(soup: BeautifulSoup) -> dict | None:
@@ -124,7 +134,7 @@ def _parse_kb_html(html: str, url: str) -> CarInfo:
     engine_text = _find_value_by_th(soup, "배기량") or ""
     fuel_text = _find_value_by_th(soup, "연료") or ""
 
-    year = _extract_year_from_text(year_text)
+    year, production_year_month = _extract_year_and_month_from_text(year_text)
     mileage_km = _parse_int(mileage_text)
     engine_cc = _parse_int(engine_text)
     fuel_type = _extract_fuel_type(fuel_text) or "Не указано"
@@ -159,6 +169,73 @@ def _parse_kb_html(html: str, url: str) -> CarInfo:
         price_won=int(price_won),
         photos=photos,
         source_url=url,
+        production_year_month=production_year_month,
+    )
+
+
+def _extract_car_seq(url: str) -> str | None:
+    match = re.search(r"carSeq=(\d+)", url)
+    return match.group(1) if match else None
+
+
+def _parse_from_kb_list_empty(html: str, url: str) -> CarInfo:
+    car_seq = _extract_car_seq(url)
+    if not car_seq:
+        raise ValueError("KB: carSeq not found in URL")
+
+    soup = BeautifulSoup(html, "html.parser")
+    card = soup.select_one(f'div.area[data-car-seq="{car_seq}"]')
+    if not card:
+        raise ValueError("KB: listing card not found in list.empty")
+
+    title_node = card.select_one("strong.tit")
+    title = title_node.get_text(" ", strip=True) if title_node else "Unknown Car"
+    brand, model = _extract_brand_model(title)
+
+    info_spans = card.select("div.data-line span")
+    year_text = info_spans[0].get_text(" ", strip=True) if len(info_spans) >= 1 else ""
+    mileage_text = info_spans[1].get_text(" ", strip=True) if len(info_spans) >= 2 else ""
+
+    year, production_year_month = _extract_year_and_month_from_text(year_text)
+    mileage_km = _parse_int(mileage_text)
+
+    price_text = ""
+    price_node = card.select_one("span.price") or card.select_one("strong.pay")
+    if price_node:
+        price_text = price_node.get_text(" ", strip=True)
+    price_manwon = _parse_int(price_text)
+    price_won = (price_manwon * 10_000) if price_manwon is not None else None
+
+    photos: list[str] = []
+    for img in card.select("div.thumnail img"):
+        src = img.get("src")
+        if src:
+            photos.append(src)
+    photos = list(dict.fromkeys(photos))[:10]
+
+    missing = [
+        name
+        for name, value in {
+            "year": year,
+            "mileage": mileage_km,
+            "price_won": price_won,
+        }.items()
+        if value is None
+    ]
+    if missing:
+        raise ValueError(f"KB list.empty: Missing required fields: {', '.join(missing)}")
+
+    return CarInfo(
+        brand=brand or "Unknown",
+        model=model,
+        year=int(year),
+        mileage_km=int(mileage_km),
+        engine_cc=1600,
+        fuel_type="Не указано",
+        price_won=int(price_won),
+        photos=photos,
+        source_url=url,
+        production_year_month=production_year_month,
     )
 
 
@@ -167,5 +244,15 @@ async def parse_kbchachacha_listing(url: str) -> CarInfo:
     try:
         return _parse_kb_html(html, url)
     except Exception:
-        # fallback на общий парсер, если структура страницы изменилась
-        return await parse_with_fallback(url)
+        # Strict static fallback (no guessed defaults)
+        try:
+            return parse_car_from_html(html, url, strict=True)
+        except Exception:
+            # Parse from list endpoint card block by carSeq (works without Playwright)
+            try:
+                list_html = await fetch_page_html("https://www.kbchachacha.com/public/search/list.empty", use_playwright=False)
+                return _parse_from_kb_list_empty(list_html, url)
+            except Exception:
+                # Last resort: JS fallback
+                rendered_html = await fetch_page_html(url, use_playwright=True)
+                return _parse_kb_html(rendered_html, url)

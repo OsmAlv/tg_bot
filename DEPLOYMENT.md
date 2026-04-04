@@ -52,3 +52,22 @@ AUTOPOST_CHANNEL=@your_channel_username
 - Railway → Logs → видишь логи бота в реальном времени
 
 Всё готово! 🎉
+
+---
+
+## Автопоиск и автопост (5–10 раз в день)
+
+Можно запускать отдельный job командой:
+
+`python -m bot.autopost_runner`
+
+Рекомендуемый вариант для Railway:
+
+1. Создай отдельный service/job для этой команды.
+2. Передай те же Variables + дополнительные:
+	- `AUTO_SCAN_CONFIG_PATH=autopost_filters.json`
+	- `AUTO_SCAN_STATE_PATH=data/autopost_seen.json`
+	- `AUTO_SCAN_INTERVAL_MINUTES=` (пусто для single-run)
+3. Настрой расписание (cron) на 5–10 запусков в день.
+
+Файл фильтров: [autopost_filters.json](autopost_filters.json)

@@ -108,3 +108,43 @@ The bot handles:
 - unsupported domains
 - missing page fields
 - parser/network exceptions
+
+## Auto scanner (5-10 times per day)
+
+You can run an automatic market scan and post matching cars directly to your channel.
+
+### 1) Configure filters
+
+Edit [autopost_filters.json](autopost_filters.json) with your search URLs and constraints:
+
+- `search_urls` — search pages or direct listing URLs
+- `filters.year_min`, `filters.mileage_max`, `filters.fuel_types`
+- `filters.price_usd_max`, `filters.final_price_usd_max`
+- `max_posts_per_run` — cap for each preset per run
+
+### 2) Set env variables
+
+Add to `.env` (or Railway Variables):
+
+- `AUTOPOST_CHANNEL=@your_channel`
+- `AUTO_SCAN_CONFIG_PATH=autopost_filters.json`
+- `AUTO_SCAN_STATE_PATH=data/autopost_seen.json`
+- `AUTO_SCAN_INTERVAL_MINUTES=` (empty = run once)
+
+### 3) Run once (best for cron)
+
+- `python -m bot.autopost_runner`
+
+### 4) Optional loop mode
+
+Set `AUTO_SCAN_INTERVAL_MINUTES=180` and run:
+
+- `python -m bot.autopost_runner`
+
+The scanner:
+
+- checks Encar / KB / KCar links from search pages
+- parses each listing with your existing parsers
+- applies your filters
+- posts only new matches to channel
+- stores already posted URLs in [data/autopost_seen.json](data/autopost_seen.json)
