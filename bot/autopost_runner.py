@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 from aiogram import Bot
 
@@ -19,13 +20,24 @@ from utils.helpers import load_settings
 logger = logging.getLogger(__name__)
 
 
+def _default_state_path() -> str:
+    volume_mount = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    if volume_mount:
+        return str(Path(volume_mount) / "autopost_seen.json")
+
+    if Path("/data").exists():
+        return "/data/autopost_seen.json"
+
+    return "data/autopost_seen.json"
+
+
 async def run_once() -> None:
     settings = load_settings()
     if not settings.autopost_channel:
         raise ValueError("AUTOPOST_CHANNEL is required for auto scanner")
 
     config_path = os.getenv("AUTO_SCAN_CONFIG_PATH", "autopost_filters.json")
-    state_path = os.getenv("AUTO_SCAN_STATE_PATH", "data/autopost_seen.json")
+    state_path = os.getenv("AUTO_SCAN_STATE_PATH", _default_state_path())
 
     presets = load_watch_presets(config_path)
     seen_urls = load_seen_urls(state_path)

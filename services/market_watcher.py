@@ -180,6 +180,28 @@ def _build_telegram_post_url(channel_id: str | int, message_id: int) -> str:
     return ""
 
 
+def _normalize_photo_url(url: str | None) -> str:
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    return url.split("?", 1)[0]
+
+
+def _car_fingerprint(car: Any) -> str:
+    brand = str(getattr(car, "brand", "") or "").strip().lower()
+    model = str(getattr(car, "model", "") or "").strip().lower()
+    year = int(getattr(car, "year", 0) or 0)
+    mileage = int(getattr(car, "mileage_km", 0) or 0)
+    engine = int(getattr(car, "engine_cc", 0) or 0)
+    fuel = str(getattr(car, "fuel_type", "") or "").strip().lower()
+    price_won = int(getattr(car, "price_won", 0) or 0)
+    photos = getattr(car, "photos", None) or []
+    first_photo = _normalize_photo_url(photos[0] if photos else "")
+    return f"fp:{brand}|{model}|{year}|{mileage}|{engine}|{fuel}|{price_won}|{first_photo}"
+
+
 def save_watch_results_table(results_path: str | Path, rows: list[WatchTableRow]) -> None:
     path = Path(results_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,6 +270,7 @@ async def run_market_watch(
     table_rows: list[WatchTableRow] = []
     results_path = os.getenv("AUTO_SCAN_RESULTS_PATH", "data/autopost_results.csv")
     processed_seen_keys: set[str] = set()
+    processed_fingerprints: set[str] = set()
 
     manager_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="💬 Написать менеджеру", url=manager_chat_url)]]
@@ -365,6 +388,31 @@ async def run_market_watch(
                     fuel_type=car.fuel_type,
                 )
 
+                fingerprint = _car_fingerprint(car)
+                if fingerprint in seen_urls or fingerprint in processed_fingerprints:
+                    table_rows.append(
+                        WatchTableRow(
+                            timestamp_utc=_utc_now_iso(),
+                            preset=preset.name,
+                            source_search_url=candidate.source_search_url,
+                            listing_url=listing_url,
+                            seen_key=seen_key,
+                            marketplace=marketplace.value,
+                            status="skipped_duplicate_fingerprint",
+                            reason="same car fingerprint already posted",
+                            brand=car.brand,
+                            model=car.model,
+                            year=str(car.year),
+                            production_year_month=str(getattr(car, "production_year_month", "") or ""),
+                            mileage_km=str(car.mileage_km),
+                            engine_cc=str(car.engine_cc),
+                            fuel_type=car.fuel_type,
+                            price_korea_usd=f"{price_korea_usd:.2f}",
+                            final_price_usd=f"{price_result.final_price_usd:.2f}",
+                        )
+                    )
+                    continue
+
                 if not _matches_filters(
                     car=car,
                     price_korea_usd=price_korea_usd,
@@ -412,6 +460,8 @@ async def run_market_watch(
                 # Save stable dedupe key + original URL (backward compatibility)
                 seen_urls.add(seen_key)
                 seen_urls.add(listing_url)
+                seen_urls.add(fingerprint)
+                processed_fingerprints.add(fingerprint)
                 table_rows.append(
                     WatchTableRow(
                         timestamp_utc=_utc_now_iso(),
