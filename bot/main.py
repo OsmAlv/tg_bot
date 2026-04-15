@@ -52,6 +52,35 @@ def build_car_message(
     return message
 
 
+def build_manual_post_message(price_usd: float) -> str:
+    return (
+        "🚘 Авто из Кореи\n\n"
+        "🚢 Доставка: от 1 месяца\n\n"
+        f"💰 Цена в Корее: {format_money_usd(price_usd)} $\n\n"
+        "🤝 Для персонального и максимально точного расчета обратитесь к менеджеру."
+    )
+
+
+def _extract_price_usd(text: str) -> float | None:
+    raw = (text or "").strip().lower()
+    if not raw:
+        return None
+
+    # Keep only the first plausible numeric token.
+    match = re.search(r"([0-9][0-9\s,\.]{2,})", raw)
+    if not match:
+        return None
+
+    digits = re.sub(r"[^0-9]", "", match.group(1))
+    if not digits:
+        return None
+
+    value = int(digits)
+    if value <= 0:
+        return None
+    return float(value)
+
+
 async def _api_call_with_retry(coro_factory, max_retries: int = 3):
     """Call coro_factory() and retry on TelegramRetryAfter, waiting the required time."""
     for attempt in range(max_retries + 1):
@@ -98,6 +127,7 @@ def register_handlers(
 ) -> None:
     authorized_admin_chats: set[int] = set()
     pending_admin_action_by_chat: dict[int, str] = {}
+    pending_manual_photos_by_chat: dict[int, list[str]] = {}
 
     def _manager_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
@@ -188,6 +218,43 @@ def register_handlers(
 
         await callback.answer()
 
+    @dp.message(F.photo)
+    async def handle_manual_photo(message: Message) -> None:
+        chat_id = message.chat.id
+        if not message.photo:
+            return
+
+        photos = pending_manual_photos_by_chat.setdefault(chat_id, [])
+        file_id = message.photo[-1].file_id
+        if file_id not in photos:
+            photos.append(file_id)
+        if len(photos) > 10:
+            pending_manual_photos_by_chat[chat_id] = photos[-10:]
+            photos = pending_manual_photos_by_chat[chat_id]
+
+        caption_price = _extract_price_usd(message.caption or "")
+        if caption_price is not None:
+            result_text = build_manual_post_message(caption_price)
+            await _send_result(bot, message.chat.id, result_text, photos, reply_markup=_manager_keyboard())
+
+            if autopost_channel:
+                try:
+                    await asyncio.sleep(1)
+                    await _send_result(bot, autopost_channel, result_text, photos, reply_markup=_manager_keyboard())
+                    await message.answer(f"Готово. Опубликовал в канал: {autopost_channel}")
+                except Exception as exc:
+                    logger.exception("Failed to autopost manual photo+price result to channel", exc_info=exc)
+                    await message.answer("Пост отправлен вам, но не удалось опубликовать его в канал.")
+            else:
+                await message.answer("Готово. Пост сформирован.")
+
+            pending_manual_photos_by_chat.pop(chat_id, None)
+            return
+
+        await message.answer(
+            f"Фото сохранено ({len(photos)}). Теперь отправьте цену, например: 87377"
+        )
+
     @dp.message(F.text)
     async def handle_link(message: Message) -> None:
         text = message.text or ""
@@ -249,6 +316,33 @@ def register_handlers(
             elif action == "set_krw_per_usd":
                 await _set_krw_per_usd_rate(value)
                 await message.answer(f"KRW_PER_USD обновлен: {value:.2f}", reply_markup=_admin_keyboard())
+            return
+
+        if lower_text in {"отмена", "cancel"} and chat_id in pending_manual_photos_by_chat:
+            pending_manual_photos_by_chat.pop(chat_id, None)
+            await message.answer("Черновик поста отменен.")
+            return
+
+        if chat_id in pending_manual_photos_by_chat:
+            manual_price = _extract_price_usd(plain_text)
+            if manual_price is None:
+                await message.answer("Не вижу цену. Отправьте число, например: 87377, или 'отмена'.")
+                return
+
+            photos = pending_manual_photos_by_chat.pop(chat_id)
+            result_text = build_manual_post_message(manual_price)
+            await _send_result(bot, message.chat.id, result_text, photos, reply_markup=_manager_keyboard())
+
+            if autopost_channel:
+                try:
+                    await asyncio.sleep(1)
+                    await _send_result(bot, autopost_channel, result_text, photos, reply_markup=_manager_keyboard())
+                    await message.answer(f"Готово. Опубликовал в канал: {autopost_channel}")
+                except Exception as exc:
+                    logger.exception("Failed to autopost manual photo+price result to channel", exc_info=exc)
+                    await message.answer("Пост отправлен вам, но не удалось опубликовать его в канал.")
+            else:
+                await message.answer("Готово. Пост сформирован.")
             return
 
         urls = extract_urls(text)
