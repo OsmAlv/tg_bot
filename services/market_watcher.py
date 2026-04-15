@@ -247,6 +247,7 @@ async def run_market_watch(
     result = WatchResult()
     table_rows: list[WatchTableRow] = []
     results_path = os.getenv("AUTO_SCAN_RESULTS_PATH", "data/autopost_results.csv")
+    processed_seen_keys: set[str] = set()
 
     manager_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="💬 Написать менеджеру", url=manager_chat_url)]]
@@ -264,6 +265,21 @@ async def run_market_watch(
         for candidate in candidate_urls:
             listing_url = candidate.listing_url
             seen_key = _listing_seen_key(listing_url)
+            if seen_key in processed_seen_keys:
+                table_rows.append(
+                    WatchTableRow(
+                        timestamp_utc=_utc_now_iso(),
+                        preset=preset.name,
+                        source_search_url=candidate.source_search_url,
+                        listing_url=listing_url,
+                        seen_key=seen_key,
+                        marketplace="",
+                        status="skipped_duplicate_in_run",
+                        reason="same listing key already processed in this run",
+                    )
+                )
+                continue
+
             if listing_url in seen_urls or seen_key in seen_urls:
                 table_rows.append(
                     WatchTableRow(
@@ -278,6 +294,8 @@ async def run_market_watch(
                     )
                 )
                 continue
+
+            processed_seen_keys.add(seen_key)
             if posted_for_preset >= preset.max_posts_per_run:
                 break
 
@@ -476,14 +494,17 @@ async def _collect_candidate_listing_urls(search_urls: list[str], max_candidates
     # when runs are time-limited.
     per_source_urls: list[list[CandidateListing]] = []
     global_seen: set[str] = set()
+    global_seen_keys: set[str] = set()
 
     for search_url in search_urls:
         urls = await _extract_listing_urls_from_page(search_url, max_count=max_candidates_per_url)
         filtered: list[CandidateListing] = []
         for url in urls:
-            if url in global_seen:
+            seen_key = _listing_seen_key(url)
+            if url in global_seen or seen_key in global_seen_keys:
                 continue
             global_seen.add(url)
+            global_seen_keys.add(seen_key)
             filtered.append(CandidateListing(listing_url=url, source_search_url=search_url))
             if len(filtered) >= max_candidates_per_url:
                 break

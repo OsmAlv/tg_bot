@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def _normalize_manager_chat_url(raw_value: str) -> str:
     value = (raw_value or "").strip()
     if not value:
-        return "https://t.me/DO_sales_manager"
+        return "https://t.me/avalon_support_manager"
 
     if value.startswith("@"):
         return f"https://t.me/{value[1:]}"
@@ -44,7 +44,7 @@ class Settings:
     krw_per_usd: float | None = None
     fixed_usd_uzs: float | None = None
     admin_panel_key: str = "spidoznie_kozyavki"
-    manager_chat_url: str = "https://t.me/DO_sales_manager"
+    manager_chat_url: str = "https://t.me/avalon_support_manager"
     autopost_channel: str | None = None
 
 
@@ -84,7 +84,7 @@ def load_settings() -> Settings:
         fixed_usd_uzs = None
     admin_panel_key = os.getenv("ADMIN_PANEL_KEY", "spidoznie_kozyavki").strip() or "spidoznie_kozyavki"
     manager_chat_url = _normalize_manager_chat_url(
-        os.getenv("MANAGER_CHAT_URL", "https://t.me/DO_sales_manager")
+        os.getenv("MANAGER_CHAT_URL", "https://t.me/avalon_support_manager")
     )
     autopost_channel_raw = os.getenv("AUTOPOST_CHANNEL", "").strip()
     autopost_channel = autopost_channel_raw or None
