@@ -15,6 +15,28 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 
+def _normalize_manager_chat_url(raw_value: str) -> str:
+    value = (raw_value or "").strip()
+    if not value:
+        return "https://t.me/DO_sales_manager"
+
+    if value.startswith("@"):
+        return f"https://t.me/{value[1:]}"
+
+    lower = value.lower()
+    if lower.startswith("http://") or lower.startswith("https://"):
+        return value
+
+    if lower.startswith("t.me/"):
+        return f"https://{value}"
+
+    # If plain username is provided (without @), treat it as telegram username
+    if re.fullmatch(r"[A-Za-z0-9_]{5,}", value):
+        return f"https://t.me/{value}"
+
+    return value
+
+
 @dataclass
 class Settings:
     telegram_bot_token: str
@@ -61,7 +83,9 @@ def load_settings() -> Settings:
     except ValueError:
         fixed_usd_uzs = None
     admin_panel_key = os.getenv("ADMIN_PANEL_KEY", "spidoznie_kozyavki").strip() or "spidoznie_kozyavki"
-    manager_chat_url = os.getenv("MANAGER_CHAT_URL", "https://t.me/DO_sales_manager").strip() or "https://t.me/DO_sales_manager"
+    manager_chat_url = _normalize_manager_chat_url(
+        os.getenv("MANAGER_CHAT_URL", "https://t.me/DO_sales_manager")
+    )
     autopost_channel_raw = os.getenv("AUTOPOST_CHANNEL", "").strip()
     autopost_channel = autopost_channel_raw or None
     return Settings(

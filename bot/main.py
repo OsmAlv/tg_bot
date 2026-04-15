@@ -52,33 +52,38 @@ def build_car_message(
     return message
 
 
-def build_manual_post_message(price_usd: float) -> str:
+def build_manual_post_message(price_usd: float, custom_title: str | None = None) -> str:
+    title = (custom_title or "").strip() or "Авто из Кореи"
     return (
-        "🚘 Авто из Кореи\n\n"
+        f"🚘 {title}\n\n"
         "🚢 Доставка: от 1 месяца\n\n"
         f"💰 Цена в Корее: {format_money_usd(price_usd)} $\n\n"
         "🤝 Для персонального и максимально точного расчета обратитесь к менеджеру."
     )
 
 
-def _extract_price_usd(text: str) -> float | None:
+def _extract_title_and_price_usd(text: str) -> tuple[str | None, float | None]:
     raw = (text or "").strip().lower()
     if not raw:
-        return None
+        return None, None
 
-    # Keep only the first plausible numeric token.
-    match = re.search(r"([0-9][0-9\s,\.]{2,})", raw)
-    if not match:
-        return None
+    source = (text or "").strip()
+    matches = list(re.finditer(r"([0-9][0-9\s,\.]{2,})", source))
+    if not matches:
+        return None, None
+    match = matches[-1]  # treat the last big number as price
 
     digits = re.sub(r"[^0-9]", "", match.group(1))
     if not digits:
-        return None
+        return None, None
 
     value = int(digits)
     if value <= 0:
-        return None
-    return float(value)
+        return None, None
+
+    title = (source[: match.start()] + source[match.end() :]).strip(" -—|:,\n\t")
+    title = re.sub(r"\s+", " ", title).strip() if title else ""
+    return (title or None), float(value)
 
 
 async def _api_call_with_retry(coro_factory, max_retries: int = 3):
@@ -232,9 +237,9 @@ def register_handlers(
             pending_manual_photos_by_chat[chat_id] = photos[-10:]
             photos = pending_manual_photos_by_chat[chat_id]
 
-        caption_price = _extract_price_usd(message.caption or "")
+        caption_title, caption_price = _extract_title_and_price_usd(message.caption or "")
         if caption_price is not None:
-            result_text = build_manual_post_message(caption_price)
+            result_text = build_manual_post_message(caption_price, custom_title=caption_title)
             await _send_result(bot, message.chat.id, result_text, photos, reply_markup=_manager_keyboard())
 
             if autopost_channel:
@@ -252,7 +257,10 @@ def register_handlers(
             return
 
         await message.answer(
-            f"Фото сохранено ({len(photos)}). Теперь отправьте цену, например: 87377"
+            (
+                f"Фото сохранено ({len(photos)}). Теперь отправьте цену, например: 87377\n"
+                "Можно сразу с названием: Mercedes E53 2025 87377"
+            )
         )
 
     @dp.message(F.text)
@@ -324,13 +332,13 @@ def register_handlers(
             return
 
         if chat_id in pending_manual_photos_by_chat:
-            manual_price = _extract_price_usd(plain_text)
+            custom_title, manual_price = _extract_title_and_price_usd(plain_text)
             if manual_price is None:
                 await message.answer("Не вижу цену. Отправьте число, например: 87377, или 'отмена'.")
                 return
 
             photos = pending_manual_photos_by_chat.pop(chat_id)
-            result_text = build_manual_post_message(manual_price)
+            result_text = build_manual_post_message(manual_price, custom_title=custom_title)
             await _send_result(bot, message.chat.id, result_text, photos, reply_markup=_manager_keyboard())
 
             if autopost_channel:
