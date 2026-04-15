@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -534,6 +535,11 @@ async def run_market_watch(
     if table_rows:
         save_watch_results_table(results_path, table_rows)
         logger.info("Saved %d scan rows to %s", len(table_rows), results_path)
+        status_counts = Counter(row.status for row in table_rows)
+        logger.info(
+            "Scan status breakdown: %s",
+            ", ".join(f"{status}={count}" for status, count in sorted(status_counts.items())),
+        )
 
     return result
 
